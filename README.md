@@ -1,0 +1,1112 @@
+# Company Document RAG
+
+Company Document RAG သည် company ရဲ့ PDF နှင့် Markdown စာရွက်စာတမ်းတွေကို local AI နဲ့ရှာဖွေဖြေဆိုနိုင်ရန်တည်ဆောက်မယ့် MVP project ဖြစ်သည်။
+
+## Current Scope
+
+Current platform သည် Company Knowledge Base RAG foundation ကို production
+deployment အတွက် hardening လုပ်ထားသည်။
+
+- FastAPI backend
+- Qdrant vector database
+- PostgreSQL metadata database
+- Ollama local LLM
+- sentence-transformers local embeddings
+- Docker Compose based local runtime
+- PDF and Markdown document ingestion
+- Git repository Code RAG ingestion
+- JWT authentication
+- Admin Control Panel user creation, listing, and activation
+- user-document and user-repository ACL
+- Vector, BM25, Hybrid Search, and optional Reranker
+- Trace, Feedback, Evaluation, and Analytics Dashboard
+- read-only MCP server for Hermes integration
+- Alembic migrations, backup/restore scripts, health checks, and benchmarks
+
+Current scope တွင် အောက်ပါတို့ကို မထည့်သေးပါ။
+
+- Agent System
+- Database RAG
+- Multimodal RAG
+- Multi-tenant isolation
+
+## Architecture
+
+RAG system ၏အဓိက data flow သည် အောက်ပါအတိုင်းဖြစ်သည်။
+
+```text
+Company Documents
+  -> Document Loader / Parser
+  -> Text Chunker
+  -> Embedding Model
+  -> Qdrant Vector Store
+  -> PostgreSQL Metadata Store
+  -> Retriever
+  -> Ollama LLM
+  -> Answer with Sources
+```
+
+### Component Responsibilities
+
+- **FastAPI**: HTTP API entrypoint ဖြစ်ပြီး document ingestion နှင့် question-answer endpoints ကို expose လုပ်မည်။
+- **Document Loader / Parser**: PDF နှင့် Markdown မှ text ထုတ်ယူမည်။
+- **Text Chunker**: ရှည်လျားသော document text ကို retrieval အတွက်သင့်တော်သော chunk များအဖြစ်ခွဲမည်။
+- **Embedding Model**: sentence-transformers ဖြင့် chunk တစ်ခုချင်းစီကို vector embedding အဖြစ်ပြောင်းမည်။
+- **Qdrant**: embeddings နှင့် metadata များကိုသိမ်းပြီး semantic search ပြန်ပေးမည်။
+- **PostgreSQL**: uploaded documents နှင့် generated chunks metadata များကိုသိမ်းမည်။
+- **Retriever**: user question အတွက်သက်ဆိုင်ရာ chunks များကို Qdrant မှရှာမည်။
+- **Ollama**: retrieved context ကိုအသုံးပြုပြီး final answer ထုတ်မည်။
+
+## Folder Structure
+
+```text
+company-document-rag/
+  app/
+    main.py
+    api/
+    core/
+      config.py
+    db/
+      models.py
+      session.py
+    services/
+      document_loader.py
+      text_chunker.py
+      embedding_service.py
+      vector_store.py
+      ingestion_service.py
+      metadata_service.py
+      retrieval_service.py
+      prompt_builder.py
+      generation_service.py
+      knowledge_tool_service.py
+    mcp/
+      server.py
+      auth.py
+    schemas/
+      documents.py
+      mcp.py
+  data/
+    documents/
+  scripts/
+    inspect_documents.py
+    inspect_chunks.py
+    inspect_embeddings.py
+    store_vectors.py
+    inspect_vector_store.py
+    query_vectors.py
+    answer_question.py
+  tests/
+  docker-compose.yml
+  requirements.txt
+  README.md
+```
+
+### Folder Responsibilities
+
+- `app/`: FastAPI application source code အားလုံးထားမည့် root package။
+- `app/main.py`: FastAPI app ကို initialize လုပ်မည့် entrypoint။
+- `app/api/`: HTTP API route modules များထားမည့်နေရာ။
+- `app/core/`: app settings, environment variables, shared configuration များထားမည့်နေရာ။
+- `app/core/config.py`: chunk size နှင့် overlap ကဲ့သို့ configurable settings များထားမည့်နေရာ။
+- `app/db/`: SQLAlchemy models နှင့် PostgreSQL connection/session setup များထားမည့်နေရာ။
+- `app/services/`: document loading, chunking, embedding, vector store, retrieval, generation စသည့် RAG business logic များထားမည့်နေရာ။
+- `app/services/document_loader.py`: `data/documents/` ထဲမှ PDF နှင့် Markdown files များကိုရှာပြီး text extraction လုပ်မည့် service။
+- `app/services/text_chunker.py`: extracted text ကို configurable size/overlap ဖြင့် chunks ခွဲမည့် service။
+- `app/services/embedding_service.py`: chunks များကို sentence-transformers local model ဖြင့် dense vectors အဖြစ်ပြောင်းမည့် service။
+- `app/services/vector_store.py`: embedded chunks များကို Qdrant collection ထဲသို့သိမ်းရန်နှင့် collection status စစ်ရန် service။
+- `app/services/ingestion_service.py`: uploaded document ကို save, parse, chunk, embed, vector store, metadata store flow အဖြစ် run မည့် service။
+- `app/services/metadata_service.py`: document နှင့် chunk metadata ကို PostgreSQL ထဲသိမ်းမည့် service။
+- `app/services/retrieval_service.py`: user query ကို embedding ပြောင်းပြီး Qdrant မှ relevant chunks များရှာမည့် retrieval service။
+- `app/services/prompt_builder.py`: user question နှင့် retrieved context ကို Ollama အတွက် prompt အဖြစ်တည်ဆောက်မည့် service။
+- `app/services/generation_service.py`: prompt ကို Ollama local API သို့ပို့ပြီး answer နှင့် sources ပြန်ထုတ်မည့် service။
+- `app/services/knowledge_tool_service.py`: MCP read-only tools အတွက် existing services များကို orchestration လုပ်မည့် service။
+- `app/mcp/`: Hermes ကချိတ်မည့် MCP server process နှင့် service-account auth code များထားမည့်နေရာ။
+- `app/schemas/`: API request/response Pydantic models များထားမည့်နေရာ။
+- `app/schemas/documents.py`: extracted text, chunk text, embedded chunk, retrieval result, generated answer နှင့် metadata models များထားမည့်နေရာ။
+- `app/schemas/mcp.py`: MCP tool response schemas များထားမည့်နေရာ။
+- `data/documents/`: MVP တွင် ingest လုပ်မည့် company documents များကို local ထားမည့်နေရာ။
+- `scripts/`: one-off helper scripts များထားမည့်နေရာ။ ဥပမာ document ingestion script။
+- `scripts/inspect_documents.py`: extracted document text နှင့် metadata ကို CLI မှကြည့်ရန် script။
+- `scripts/inspect_chunks.py`: generated chunks နှင့် preserved metadata ကို CLI မှကြည့်ရန် script။
+- `scripts/inspect_embeddings.py`: generated vectors, original text နှင့် preserved metadata ကို CLI မှကြည့်ရန် script။
+- `scripts/store_vectors.py`: generated embeddings များကို Qdrant collection ထဲသို့ upsert လုပ်ရန် script။
+- `scripts/inspect_vector_store.py`: Qdrant collection status နှင့် stored payload samples ကို CLI မှကြည့်ရန် script။
+- `scripts/query_vectors.py`: user query ဖြင့် Qdrant similarity search စမ်းရန် script။
+- `scripts/answer_question.py`: retrieval results ကို Ollama သို့ပို့ပြီး simple RAG answer စမ်းရန် script။
+- `tests/`: unit tests နှင့် API tests များထားမည့်နေရာ။
+
+## Document Ingestion Pipeline
+
+အခုအဆင့်တွင် pipeline သည် loading, parsing, chunking, embedding generation, Qdrant vector storage, PostgreSQL metadata storage, retrieval နှင့် Ollama answer generation ကိုလုပ်သည်။ Agent logic နှင့် Memory မထည့်သေးပါ။
+
+```text
+data/documents/
+  -> discover PDF and Markdown files
+  -> parse file text
+  -> attach metadata
+  -> return extracted document blocks
+  -> split into chunks
+  -> generate local embeddings
+  -> store vectors and payloads in Qdrant
+  -> store document and chunk metadata in PostgreSQL
+  -> embed user query
+  -> search similar vectors in Qdrant
+  -> build prompt from user question and retrieved context
+  -> call Ollama local API
+  -> return answer with sources
+  -> inspect extracted documents, chunks, embeddings, vector store, retrieval results, or answers with CLI
+```
+
+### Metadata
+
+Extracted block တစ်ခုချင်းစီတွင် အောက်ပါ metadata ပါသည်။
+
+- `filename`: original file name
+- `source_path`: `data/documents/` အောက်ရှိ relative path
+- `file_type`: `pdf` or `markdown`
+- `page_number`: PDF အတွက် one-based page number, Markdown အတွက် `null`
+
+Chunk တစ်ခုချင်းစီတွင် original metadata မပျောက်အောင်သိမ်းထားပြီး အောက်ပါ fields များထပ်ပါသည်။
+
+- `chunk_index`: source block တစ်ခုအတွင်း one-based chunk number
+- `start_char`: extracted text ထဲရှိ chunk start offset
+- `end_char`: extracted text ထဲရှိ chunk exclusive end offset
+
+Embedded chunk တစ်ခုချင်းစီတွင် အောက်ပါ output ပါသည်။
+
+- `vector`: sentence-transformers မှထုတ်ထားသော dense vector
+- `text`: original chunk text
+- `metadata`: original chunk metadata
+
+Qdrant payload တစ်ခုချင်းစီတွင် အောက်ပါ fields များပါသည်။
+
+- `text`: original chunk text
+- `filename`: original file name
+- `source_path`: `data/documents/` အောက်ရှိ relative path
+- `file_type`: `pdf` or `markdown`
+- `page_number`: PDF page number or `null`
+- `chunk_index`: source block အတွင်း chunk number
+- `start_char`: extracted text ထဲရှိ chunk start offset
+- `end_char`: extracted text ထဲရှိ chunk exclusive end offset
+
+Retrieval result တစ်ခုချင်းစီတွင် အောက်ပါ fields များပါသည်။
+
+- `text`: retrieved chunk text
+- `filename`: original file name
+- `page_number`: PDF page number or `null`
+- `score`: Qdrant similarity score
+- `metadata`: chunk metadata အပြည့်အစုံ
+
+Generated answer response တွင် အောက်ပါ fields များပါသည်။
+
+- `answer`: Ollama မှ generate လုပ်ထားသော answer
+- `sources`: answer အတွက်သုံးခဲ့သော retrieved chunks source list
+- `sources[].filename`: source file name
+- `sources[].page_number`: PDF page number or `null`
+- `sources[].score`: retrieval similarity score
+
+## Local Setup
+
+Docker Compose ဖြင့် API, Qdrant, Ollama ကိုတင်နိုင်သည်။ API dependencies များကို
+Docker image build အချိန်တွင် install လုပ်ထားပြီး container start တိုင်း
+`pip install` ပြန်မလုပ်တော့ပါ။
+
+API image ကို build လုပ်ရန်:
+
+```bash
+cd company-document-rag
+docker compose build api
+```
+
+Stack ကိုတင်ရန်:
+
+```bash
+docker compose up
+```
+
+Ollama container တက်ပြီးနောက် model ကို pull လုပ်ရန်။
+
+```bash
+docker compose exec ollama ollama pull llama3.1:8b
+```
+
+API health check:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Web chat UI ကို browser မှဖွင့်ရန်:
+
+```text
+http://localhost:8000
+```
+
+Document upload ingestion endpoint:
+
+```bash
+curl -F "file=@data/documents/company_policy.md" \
+  -H "Authorization: Bearer <access_token>" \
+  http://localhost:8000/api/ingest
+```
+
+### Docker Dependency Notes
+
+- `api` service သည် local `Dockerfile` မှ build လုပ်သည်။
+- `requirements.txt` သည် CPU-only PyTorch wheel index ကိုသုံးပြီး
+  `torch==2.7.1+cpu` ကို pin လုပ်ထားသည်။
+- CUDA-related PyTorch packages မဆွဲရန် `torch` ကို CPU-only version အဖြစ်
+  explicit ထည့်ထားသည်။
+- `requirements.txt` ပြောင်းပြီးနောက် `docker compose build api` ကိုပြန် run ရမည်။
+
+## Inspect Extracted Documents
+
+PDF သို့မဟုတ် Markdown files များကို `data/documents/` ထဲသို့ထည့်ပြီး အောက်ပါ command ဖြင့် extracted result ကိုကြည့်နိုင်သည်။
+
+```bash
+python scripts/inspect_documents.py
+```
+
+Preview length ကိုပြောင်းချင်လျှင်:
+
+```bash
+python scripts/inspect_documents.py --max-chars 1200
+```
+
+JSON output လိုချင်လျှင်:
+
+```bash
+python scripts/inspect_documents.py --format json
+```
+
+## Inspect Chunks
+
+Extracted documents ကို chunks ခွဲထားတဲ့ result ကိုကြည့်ရန်:
+
+```bash
+python scripts/inspect_chunks.py
+```
+
+Chunk size နှင့် overlap ကို command line မှ override လုပ်နိုင်သည်။
+
+```bash
+python scripts/inspect_chunks.py --chunk-size 800 --chunk-overlap 120
+```
+
+JSON output လိုချင်လျှင်:
+
+```bash
+python scripts/inspect_chunks.py --format json
+```
+
+## Inspect Embeddings
+
+Chunks များကို local sentence-transformers model ဖြင့် vector ပြောင်းထားတဲ့ result ကိုကြည့်ရန်:
+
+```bash
+python scripts/inspect_embeddings.py
+```
+
+Chunk setting နှင့် embedding model ကို command line မှ override လုပ်နိုင်သည်။
+
+```bash
+python scripts/inspect_embeddings.py --chunk-size 800 --chunk-overlap 120 --model-name sentence-transformers/all-MiniLM-L6-v2
+```
+
+JSON output လိုချင်လျှင်:
+
+```bash
+python scripts/inspect_embeddings.py --format json
+```
+
+## Store Vectors in Qdrant
+
+Qdrant ကိုအရင်တင်ရန်:
+
+```bash
+docker compose up qdrant
+```
+
+Documents များကို load, chunk, embed လုပ်ပြီး Qdrant ထဲသိမ်းရန်:
+
+```bash
+python scripts/store_vectors.py
+```
+
+Qdrant URL, collection name, chunk settings, embedding model ကို command line မှ override လုပ်နိုင်သည်။
+
+```bash
+python scripts/store_vectors.py --qdrant-url http://localhost:6333 --collection-name company_documents
+```
+
+Collection မရှိသေးလျှင် first embedding vector dimension နှင့် `Cosine` distance ဖြင့် create လုပ်မည်။ Collection ရှိပြီး vector dimension မကိုက်လျှင် error ပြပြီး overwrite မလုပ်ပါ။
+
+## Inspect Vector Store
+
+Qdrant collection status နှင့် payload samples ကိုကြည့်ရန်:
+
+```bash
+python scripts/inspect_vector_store.py
+```
+
+JSON output လိုချင်လျှင်:
+
+```bash
+python scripts/inspect_vector_store.py --format json
+```
+
+## Test Retrieval
+
+Qdrant ထဲသို့ vectors သိမ်းပြီးနောက် user query ဖြင့် relevant chunks ရှာရန်:
+
+```bash
+python scripts/query_vectors.py "leave request policy"
+```
+
+Top K, model, Qdrant URL, collection name ကို command line မှ override လုပ်နိုင်သည်။
+
+```bash
+python scripts/query_vectors.py "security document rules" --top-k 3 --collection-name company_documents
+```
+
+JSON output လိုချင်လျှင်:
+
+```bash
+python scripts/query_vectors.py "leave request policy" --format json
+```
+
+BM25 သို့မဟုတ် Hybrid Search ကိုစမ်းရန်:
+
+```bash
+python scripts/query_vectors.py "leave request policy" --retrieval-mode bm25
+
+python scripts/query_vectors.py "leave request policy" \
+  --retrieval-mode hybrid \
+  --fusion-strategy rrf
+
+python scripts/query_vectors.py "leave request policy" \
+  --retrieval-mode hybrid \
+  --fusion-strategy rrf \
+  --reranker-enabled
+```
+
+Hybrid Search သည် Vector Search နှင့် BM25 keyword retrieval ကိုပေါင်းပြီး
+default `rrf` fusion strategy ဖြင့် top K results ပြန်ပေးသည်။ Production
+default သည် `RETRIEVAL_MODE=vector` ဖြစ်နေဆဲဖြစ်ပြီး hybrid ကို environment
+variable သို့မဟုတ် CLI flag ဖြင့် enable လုပ်နိုင်သည်။ BM25 index သည်
+ဤ milestone တွင် in-memory lazy rebuild ဖြစ်သည်။ Running process အတွင်း
+documents အသစ် ingest/reindex လုပ်ပြီးနောက် BM25 corpus refresh လိုပါက API
+process ကို restart လုပ်ပါ။ Reranker သည် default disabled ဖြစ်ပြီး
+`RERANKER_ENABLED=true` သို့မဟုတ် `--reranker-enabled` ဖြင့် enable လုပ်နိုင်သည်။
+Reranking သည် retrieval candidates များကို post-process လုပ်ပြီး permission,
+auth, user logic မပါဝင်ပါ။
+
+## Generate Answer
+
+Qdrant ထဲသို့ vectors သိမ်းပြီး Ollama model ရှိပြီးနောက် simple RAG answer ထုတ်ရန်:
+
+```bash
+python scripts/answer_question.py "How do employees request leave?"
+```
+
+Top K, embedding model, Qdrant config, Ollama config ကို command line မှ override လုပ်နိုင်သည်။
+
+```bash
+python scripts/answer_question.py "What are the document security rules?" --top-k 3 --ollama-model llama3.1:8b
+```
+
+JSON output လိုချင်လျှင်:
+
+```bash
+python scripts/answer_question.py "How do employees request leave?" --format json
+```
+
+Hybrid retrieval ဖြင့် answer generation စမ်းရန်:
+
+```bash
+python scripts/answer_question.py "How do employees request leave?" \
+  --retrieval-mode hybrid \
+  --fusion-strategy rrf \
+  --reranker-enabled
+```
+
+## Evaluate RAG Quality
+
+Evaluation သည် production API မှသီးသန့်ဖြစ်သည်။ `/api/chat` ကိုမခေါ်ဘဲ
+existing `RetrievalService` နှင့် `RAGGenerationService` ကို reuse လုပ်သည်။
+Hybrid Search, Reranker, Code RAG မထည့်ခင် retrieval quality နှင့် answer
+quality baseline ကိုတိုင်းရန်သုံးနိုင်သည်။
+
+Dataset example:
+
+```json
+{
+  "version": 1,
+  "name": "Company policy baseline",
+  "metadata": {
+    "description": "Initial RAG evaluation set"
+  },
+  "cases": [
+    {
+      "id": "company-remote-work-001",
+      "question": "How many days per week may employees work remotely?",
+      "expected_sources": [
+        {
+          "filename": "company_policy.md",
+          "source_path": "company_policy.md",
+          "page_number": null
+        }
+      ],
+      "expected_answer_contains": ["three days per week", "manager"],
+      "top_k": 5,
+      "metadata": {
+        "category": "company_policy"
+      }
+    }
+  ]
+}
+```
+
+Evaluation runner:
+
+```bash
+python scripts/evaluate_rag.py \
+  --dataset data/evaluation/rag_eval.json \
+  --output reports/rag_eval_latest.json
+```
+
+JSON output:
+
+```bash
+python scripts/evaluate_rag.py \
+  --dataset data/evaluation/rag_eval.json \
+  --format json
+```
+
+Vector, Hybrid, Hybrid + Reranker retrieval quality ကိုနှိုင်းယှဉ်ရန်:
+
+```bash
+python scripts/evaluate_rag.py --retrieval-mode vector \
+  --output reports/rag_eval_vector.json
+
+python scripts/evaluate_rag.py --retrieval-mode hybrid \
+  --fusion-strategy rrf \
+  --output reports/rag_eval_hybrid.json
+
+python scripts/evaluate_rag.py --retrieval-mode hybrid \
+  --fusion-strategy rrf \
+  --reranker-enabled \
+  --output reports/rag_eval_hybrid_reranker.json
+```
+
+Report summary fields:
+
+- `total_cases`: evaluation case count
+- `retrieval_hit_rate`: expected source found in retrieved results
+- `average_expected_source_rank`: average rank for matched expected sources
+- `average_best_source_score`: average best Qdrant score for expected sources
+- `answer_keyword_coverage_rate`: average expected keyword coverage in answers
+
+Each case records:
+
+- `question`
+- `expected_sources`
+- `retrieved_documents`
+- `retrieval_score`
+- `answer_output`
+- `answer_score`
+
+`retrieved_documents` includes debug scores when available:
+
+- `vector_score`
+- `bm25_score`
+- `fusion_score`
+- `reranker_score`
+
+Feedback-aware evaluation metrics can be included without changing retrieval or
+answer behavior:
+
+```bash
+python scripts/evaluate_rag.py \
+  --dataset data/evaluation/rag_eval.json \
+  --include-feedback-metrics \
+  --output reports/rag_eval_with_feedback.json
+```
+
+Optional feedback metric filters:
+
+- `--feedback-user-id`
+- `--feedback-retrieval-mode vector|bm25|hybrid`
+- `--feedback-status PROCESSING|SUCCESS|ERROR`
+- `--feedback-created-from`
+- `--feedback-created-to`
+
+Feedback metrics added to the report summary when enabled:
+
+- `feedback_count`
+- `average_user_rating`
+- `bad_answer_rate`: rating `<= 2`
+- `good_answer_rate`: rating `>= 4`
+
+Export low-rated feedback queries into the existing evaluation dataset format:
+
+```bash
+python scripts/export_failed_queries.py \
+  --max-rating 2 \
+  --output data/evaluation/failed_queries.json
+```
+
+The exported dataset can be evaluated with the existing runner:
+
+```bash
+python scripts/evaluate_rag.py \
+  --dataset data/evaluation/failed_queries.json \
+  --output reports/rag_eval_failed_queries.json
+```
+
+## RAG Observability
+
+`/api/chat` requests create a best-effort trace record in PostgreSQL without
+changing answer behavior. Trace persistence failure is logged and does not break
+the chat response.
+
+Trace flow:
+
+```text
+/api/chat
+  -> resolve X-Request-ID or generate a UUID
+  -> set request-scoped TraceContext using ContextVar
+  -> PermissionService ACL lookup
+  -> RetrievalService timing
+  -> optional RerankerService timing
+  -> GenerationService timing
+  -> save rag_traces row
+```
+
+Request ID handling:
+
+```bash
+curl -X POST http://localhost:8000/api/chat \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -H "X-Request-ID: req-demo-001" \
+  -d '{"question":"What is the remote work policy?","top_k":5}' \
+  -i
+```
+
+The response includes the same `X-Request-ID` header. If the request header is
+missing, the API generates one.
+
+`rag_traces` fields:
+
+- `request_id`
+- `user_id`
+- `question`
+- `retrieval_mode`
+- `retrieval_time_ms`
+- `reranker_time_ms`
+- `generation_time_ms`
+- `total_time_ms`
+- `model_name`
+- `retrieved_count`
+- `status`
+- `error_message`
+- `prompt_tokens`
+- `completion_tokens`
+- `retrieved_sources`
+- `created_at`
+
+`retrieved_sources` preserves source debug information when available:
+
+- `filename`
+- `source_path`
+- `page_number`
+- `chunk_index`
+- `score`
+- `vector_score`
+- `bm25_score`
+- `fusion_score`
+- `reranker_score`
+
+### Trace Analytics API
+
+Trace analytics endpoints are read-only and protected by the existing JWT
+authentication dependency. Roles and admin permissions are not included yet.
+
+List traces:
+
+```bash
+curl "http://localhost:8000/api/traces?limit=50&offset=0&status=SUCCESS&retrieval_mode=hybrid" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Supported filters:
+
+- `limit`: page size, default `50`, max `200`
+- `offset`: pagination offset, default `0`
+- `user_id`: trace user id
+- `status`: `PROCESSING`, `SUCCESS`, or `ERROR`
+- `retrieval_mode`: `vector`, `bm25`, or `hybrid`
+- `created_from`: ISO datetime lower bound
+- `created_to`: ISO datetime upper bound
+
+Get one trace by request id:
+
+```bash
+curl http://localhost:8000/api/traces/req-demo-001 \
+  -H "Authorization: Bearer <access_token>"
+```
+
+If duplicate `request_id` rows exist, the API returns the newest trace by
+`created_at DESC, id DESC`.
+
+### RAG Feedback API
+
+Feedback is stored separately from the chat pipeline. Submitting feedback does
+not re-run retrieval, generation, reranking, or ACL checks.
+
+Submit feedback for a generated answer:
+
+```bash
+curl -X POST http://localhost:8000/api/traces/req-demo-001/feedback \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"rating":5,"comment":"The answer cited the correct policy."}'
+```
+
+`rating` must be an integer from `1` to `5`. Feedback rows are append-only;
+there are no update or delete endpoints in this milestone. If duplicate
+`request_id` trace rows exist, feedback links to the newest trace by
+`created_at DESC, id DESC`.
+
+List feedback for analytics:
+
+```bash
+curl "http://localhost:8000/api/feedback?limit=50&offset=0&rating=5&request_id=req-demo-001" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Supported filters:
+
+- `limit`: page size, default `50`, max `200`
+- `offset`: pagination offset, default `0`
+- `user_id`: feedback submitter user id
+- `rating`: integer from `1` to `5`
+- `request_id`: associated trace request id
+- `created_from`: ISO datetime lower bound
+- `created_to`: ISO datetime upper bound
+
+`rag_feedback` fields:
+
+- `id`
+- `trace_id`
+- `user_id`
+- `rating`
+- `comment`
+- `created_at`
+
+### RAG Analytics Dashboard API
+
+Dashboard analytics endpoints are read-only, JWT protected, and query the
+existing `rag_traces` and `rag_feedback` tables only. They do not change chat,
+retrieval, ACL, hybrid search, reranker, or generation behavior.
+
+Summary metrics:
+
+```bash
+curl "http://localhost:8000/api/analytics/summary?status=SUCCESS&retrieval_mode=hybrid" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Feedback metrics:
+
+```bash
+curl "http://localhost:8000/api/analytics/feedback?created_from=2026-08-01T00:00:00Z&created_to=2026-08-09T23:59:59Z" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Retrieval metrics and top failed documents:
+
+```bash
+curl "http://localhost:8000/api/analytics/retrieval?top_failed_limit=10" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Supported filters:
+
+- `user_id`
+- `status`: `PROCESSING`, `SUCCESS`, or `ERROR`
+- `retrieval_mode`: `vector`, `bm25`, or `hybrid`
+- `created_from`: ISO datetime lower bound
+- `created_to`: ISO datetime upper bound
+- `top_failed_limit`: `/api/analytics/retrieval` only, default `10`, max `100`
+
+Dashboard metrics include:
+
+- `total_questions`: count of matching trace rows
+- `average_latency_ms`: average `rag_traces.total_time_ms`
+- `average_user_rating`: average feedback rating
+- `bad_answer_rate`: feedback rating `<= 2`
+- `good_answer_rate`: feedback rating `>= 4`
+- `retrieval_mode_distribution`: trace count and rate by retrieval mode
+- `top_failed_documents`: filenames from low-rated feedback traces with
+  failure count and average retrieval score when source scores are available
+
+## Code RAG
+
+Code RAG indexes Git repositories into the same Qdrant collection as company
+documents, then reuses the existing ACL, retrieval, hybrid search, reranker,
+trace, feedback, evaluation, and analytics flow.
+
+Code ingestion flow:
+
+```text
+Git repository
+  -> clone selected branch
+  -> discover supported source files
+  -> tree-sitter parser
+  -> AST-based code chunker
+  -> existing embedding service
+  -> Qdrant code vectors
+  -> PostgreSQL code metadata
+  -> grant repository ACL to uploader
+```
+
+Ingest a repository:
+
+```bash
+curl -X POST http://localhost:8000/api/code/ingest \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repo_url":"https://github.com/company/app.git",
+    "branch":"main",
+    "include_globs":["**/*.py","**/*.ts"],
+    "exclude_globs":["**/node_modules/**","**/dist/**"]
+  }'
+```
+
+Code chunks preserve document-compatible source fields and add code metadata:
+
+- `content_type`: `code`
+- `filename`: repository-relative file path
+- `source_path`: `<repo_name>@<commit_sha>/<file_path>`
+- `file_type`: `code`
+- `language`
+- `symbol_name`
+- `symbol_kind`
+- `start_line`
+- `end_line`
+- `commit_sha`
+
+The `/api/chat` request and response contract is unchanged. Code sources are
+returned through the existing source list with `page_number=null`.
+
+Code RAG evaluation dataset example:
+
+```bash
+python scripts/evaluate_rag.py \
+  --dataset data/evaluation/code_rag_eval.json \
+  --output reports/code_rag_eval_latest.json
+```
+
+### Code Metadata Tables
+
+Code RAG adds these PostgreSQL tables:
+
+- `code_repositories`
+- `code_files`
+- `code_chunks`
+- `code_repository_permissions`
+
+For local development after pulling this milestone, recreate or reset the
+PostgreSQL metadata database if existing containers were created before these
+tables existed:
+
+```bash
+docker compose down
+docker volume rm company-document-rag_postgres_storage
+docker compose up
+```
+
+## Environment Defaults
+
+Docker Compose တွင် default values များကိုသတ်မှတ်ထားသည်။
+
+- `APP_ENV=development`
+- `DATABASE_AUTO_CREATE=true`
+- `QDRANT_URL=http://qdrant:6333`
+- `QDRANT_COLLECTION_NAME=company_documents`
+- `DATABASE_URL=postgresql+psycopg://rag:rag_password@postgres:5432/company_rag`
+- `JWT_SECRET_KEY=dev-only-change-this-secret-change-me`
+- `JWT_ALGORITHM=HS256`
+- `JWT_ACCESS_TOKEN_EXPIRE_MINUTES=60`
+- `RETRIEVAL_MODE=vector`
+- `HYBRID_FUSION_STRATEGY=rrf`
+- `HYBRID_VECTOR_WEIGHT=0.6`
+- `HYBRID_BM25_WEIGHT=0.4`
+- `HYBRID_CANDIDATE_MULTIPLIER=4`
+- `BM25_K1=1.5`
+- `BM25_B=0.75`
+- `RERANKER_ENABLED=false`
+- `RERANKER_MODEL_NAME=cross-encoder/ms-marco-MiniLM-L-6-v2`
+- `RERANKER_CANDIDATE_SIZE=20`
+- `RERANKER_BATCH_SIZE=16`
+- `OLLAMA_BASE_URL=http://ollama:11434`
+- `OLLAMA_MODEL=llama3.1:8b`
+- `EMBEDDING_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2`
+- `DOCUMENT_CHUNK_SIZE=1000`
+- `DOCUMENT_CHUNK_OVERLAP=150`
+- `MAX_REQUEST_BODY_BYTES=26214400`
+- `MAX_UPLOAD_BYTES=26214400`
+- `SECURITY_HEADERS_ENABLED=true`
+- `RATE_LIMIT_ENABLED=true`
+- `RATE_LIMIT_REQUESTS=120`
+- `RATE_LIMIT_WINDOW_SECONDS=60`
+- `CODE_REPOSITORY_ALLOWED_HOSTS=*`
+- `AUDIT_LOG_ENABLED=true`
+- `LOG_LEVEL=INFO`
+- `MCP_HOST=0.0.0.0`
+- `MCP_PORT=8001`
+- `MCP_PATH=/mcp`
+- `MCP_PUBLIC_URL=http://localhost:8001/mcp`
+- `MCP_SERVICE_ACCOUNT_EMAIL=` blank until MCP service account is configured
+- `MCP_SERVICE_TOKEN_SHA256=` blank until MCP bearer token digest is configured
+
+## Production Hardening
+
+Production deployment keeps the existing Document RAG, Code RAG, ACL, Hybrid
+Search, Reranker, Trace, Feedback, Evaluation, and Analytics behavior unchanged.
+
+Production architecture:
+
+```text
+Browser
+  -> FastAPI
+  -> Auth / ACL / RAG Services
+  -> PostgreSQL metadata
+  -> Qdrant vector store
+  -> Ollama
+```
+
+Operational hardening added:
+
+- Alembic migration version control
+- production startup through `alembic upgrade head`
+- PostgreSQL backup/restore scripts
+- Qdrant snapshot workflow
+- stored file backup/restore scripts
+- dependency readiness endpoint for PostgreSQL, Qdrant, and Ollama
+- Docker health checks and restart policies
+- request size limit, upload size validation, security headers, rate limiting
+- production JWT secret validation and code repository host allowlist
+- audit logs for auth, ingestion, document management, and ACL changes
+- benchmark and vector consistency audit scripts
+
+Production startup:
+
+```bash
+cp .env.production.example .env.production
+# edit all secrets and repository allowlist first
+docker compose \
+  --env-file .env.production \
+  -f docker-compose.yml \
+  -f docker-compose.prod.yml \
+  up -d --build
+```
+
+Manual migration commands:
+
+```bash
+DATABASE_URL=postgresql+psycopg://... alembic upgrade head
+DATABASE_URL=postgresql+psycopg://... alembic downgrade -1
+```
+
+For an existing local/prototype database created with SQLAlchemy `create_all()`,
+verify the schema and then mark it as migrated:
+
+```bash
+DATABASE_URL=postgresql+psycopg://... alembic stamp head
+```
+
+Backup commands:
+
+```bash
+DATABASE_URL=postgresql+psycopg://... scripts/backup_postgres.sh
+python scripts/qdrant_snapshot.py create
+scripts/backup_stored_files.sh
+```
+
+Restore procedures and lifecycle details:
+
+- [Production Deployment](docs/production.md)
+- [Backup And Restore](docs/backup_restore.md)
+- [Data Lifecycle Management](docs/data_lifecycle.md)
+
+Benchmark examples:
+
+```bash
+python scripts/benchmark_rag.py chat \
+  --token <access_token> \
+  --requests 20 \
+  --concurrency 4 \
+  --question "What is the remote work policy?"
+
+python scripts/benchmark_rag.py retrieval \
+  --requests 20 \
+  --retrieval-mode hybrid \
+  --reranker-enabled
+```
+
+Vector consistency audit:
+
+```bash
+python scripts/audit_vector_consistency.py --output reports/vector_audit.json
+```
+
+## Authentication Notes
+
+Authentication is kept separate from RAG business logic. User registration stores
+Argon2 password hashes in PostgreSQL, login returns a JWT bearer token, and
+protected APIs validate the token before calling RAG services.
+
+Register and login:
+
+```bash
+curl -X POST http://localhost:8000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"strong-password"}'
+
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"strong-password"}'
+```
+
+Admin user management is available through JWT-protected endpoints. RBAC is not
+included yet, so any active authenticated user can call this admin API until a
+future role model is added.
+
+```bash
+curl -H "Authorization: Bearer <access_token>" \
+  http://localhost:8000/api/admin/users
+
+curl -X POST http://localhost:8000/api/admin/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{"email":"analyst@example.com","password":"strong-password","is_active":true}'
+
+curl -X PATCH http://localhost:8000/api/admin/users/2/activation \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{"is_active":false}'
+```
+
+Future auth work:
+
+1. Add refresh tokens.
+2. Add password reset.
+3. Add email verification.
+
+## Document Permission Notes
+
+Document access control is user-document ACL v1 only. There are no roles,
+departments, tenants, or document ownership rules yet.
+
+PostgreSQL is the source of truth for permissions. Qdrant remains vector storage
+only. At query time the API asks PostgreSQL for the current user's accessible
+Qdrant point IDs, then passes those IDs to retrieval as a generic
+`allowed_point_ids` filter.
+
+New uploads automatically grant document access to the uploader.
+
+Grant/revoke document access:
+
+```bash
+curl -X POST http://localhost:8000/api/documents/1/permissions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{"user_id":2}'
+
+curl -X DELETE http://localhost:8000/api/documents/1/permissions/2 \
+  -H "Authorization: Bearer <access_token>"
+```
+
+List accessible documents for the current user:
+
+```bash
+curl -H "Authorization: Bearer <access_token>" \
+  http://localhost:8000/api/documents
+```
+
+### Permission Backfill
+
+Existing documents created before ACL support will not have
+`document_permissions` rows. Register or choose an initial admin user, then grant
+that user access to all existing documents:
+
+```bash
+docker compose exec postgres psql -U rag -d company_rag -c "
+INSERT INTO document_permissions (document_id, user_id, created_at, updated_at)
+SELECT d.id, u.id, NOW(), NOW()
+FROM documents d
+JOIN users u ON u.email = 'admin@example.com'
+ON CONFLICT (document_id, user_id) DO NOTHING;
+"
+```
+
+To reset ACL rows in local development:
+
+```bash
+docker compose exec postgres psql -U rag -d company_rag -c \
+  "TRUNCATE TABLE document_permissions RESTART IDENTITY;"
+```
+
+## MCP Server
+
+The MCP layer lets Hermes use the Knowledge Base as read-only tools while the
+Knowledge Base stays a standalone backend/service. Agent logic remains outside
+this project.
+
+MCP architecture:
+
+```text
+Hermes Agent
+  -> MCP streamable HTTP
+  -> Company Knowledge Base MCP Server
+  -> existing KB service layer
+  -> PermissionService / RetrievalService / RAGChatService
+  -> PostgreSQL / Qdrant / Ollama
+```
+
+MCP v1 tools:
+
+- `search_knowledge`: search accessible Document RAG and Code RAG chunks without
+  final answer generation.
+- `ask_knowledge`: reuse the existing full RAG pipeline and return an answer
+  with sources.
+- `get_document`: return accessible document metadata/details after ACL check.
+- `search_code`: search only accessible Code RAG chunks, with optional language
+  filtering.
+
+MCP v1 authentication uses one model: a dedicated MCP service account mapped to
+an existing KB user. Hermes sends `Authorization: Bearer <mcp-service-token>`.
+The MCP server stores only `MCP_SERVICE_TOKEN_SHA256`, resolves
+`MCP_SERVICE_ACCOUNT_EMAIL` to an existing active KB user, and reuses normal KB
+ACL rows for every retrieval/document operation.
+
+Run the MCP service:
+
+```bash
+docker compose --profile mcp up -d --build mcp
+```
+
+See [MCP Server](docs/mcp.md) for schemas, deployment, Hermes notes, and the
+test plan.
+
+## Next Milestones
+
+1. Wire the MCP endpoint into the Hermes sandbox configuration.
+2. Run production backup and recovery drills.
+3. Add document versioning as a dedicated schema migration.
+4. Move rate limiting to Redis before running multiple API replicas.

@@ -1,0 +1,166 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    environment:
+      APP_ENV: development
+      DATABASE_AUTO_CREATE: "true"
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: gemma4:31b-cloud
+      EMBEDDING_MODEL_NAME: sentence-transformers/all-MiniLM-L6-v2
+      QDRANT_COLLECTION_NAME: company_documents
+      DATABASE_URL: postgresql+psycopg://rag:rag_password@postgres:5432/company_rag
+      JWT_SECRET_KEY: dev-only-change-this-secret-change-me
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      RETRIEVAL_MODE: vector
+      HYBRID_FUSION_STRATEGY: rrf
+      HYBRID_VECTOR_WEIGHT: "0.6"
+      HYBRID_BM25_WEIGHT: "0.4"
+      HYBRID_CANDIDATE_MULTIPLIER: "4"
+      BM25_K1: "1.5"
+      BM25_B: "0.75"
+      RERANKER_ENABLED: "false"
+      RERANKER_MODEL_NAME: cross-encoder/ms-marco-MiniLM-L-6-v2
+      RERANKER_CANDIDATE_SIZE: "20"
+      RERANKER_BATCH_SIZE: "16"
+      DOCUMENT_CHUNK_SIZE: "1000"
+      DOCUMENT_CHUNK_OVERLAP: "150"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  mcp:
+    build: .
+    profiles:
+      - mcp
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    environment:
+      APP_ENV: development
+      DATABASE_AUTO_CREATE: "true"
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: gemma4:31b-cloud
+      EMBEDDING_MODEL_NAME: sentence-transformers/all-MiniLM-L6-v2
+      QDRANT_COLLECTION_NAME: company_documents
+      DATABASE_URL: postgresql+psycopg://rag:rag_password@postgres:5432/company_rag
+      JWT_SECRET_KEY: dev-only-change-this-secret-change-me
+      JWT_ALGORITHM: HS256
+      RETRIEVAL_MODE: vector
+      HYBRID_FUSION_STRATEGY: rrf
+      HYBRID_VECTOR_WEIGHT: "0.6"
+      HYBRID_BM25_WEIGHT: "0.4"
+      HYBRID_CANDIDATE_MULTIPLIER: "4"
+      BM25_K1: "1.5"
+      BM25_B: "0.75"
+      RERANKER_ENABLED: "false"
+      RERANKER_MODEL_NAME: cross-encoder/ms-marco-MiniLM-L-6-v2
+      RERANKER_CANDIDATE_SIZE: "20"
+      RERANKER_BATCH_SIZE: "16"
+      DOCUMENT_CHUNK_SIZE: "1000"
+      DOCUMENT_CHUNK_OVERLAP: "150"
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8001"
+      MCP_PATH: /mcp
+      MCP_PUBLIC_URL: http://localhost:8001/mcp
+      MCP_SERVICE_TOKEN_SHA256: ${MCP_SERVICE_TOKEN_SHA256:-}
+      MCP_SERVICE_ACCOUNT_EMAIL: ${MCP_SERVICE_ACCOUNT_EMAIL:-}
+    command: python -m app.mcp.server
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "timeout 5 bash -ec 'exec 3<>/dev/tcp/localhost/6333; printf \"GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"200 OK\" <&3'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: company_rag
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_storage:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d company_rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  qdrant_storage:
+  ollama_storage:
+  postgres_storage:

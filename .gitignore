@@ -1,0 +1,25 @@
+# Environment
+.env
+.env.*
+!.env.production.example
+
+# Runtime data
+data/documents/
+data/repositories/
+data/uploads/
+
+# Vector/database data
+qdrant_storage/
+postgres_data/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Logs
+*.log

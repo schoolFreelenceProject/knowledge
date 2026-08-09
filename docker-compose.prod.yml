@@ -1,0 +1,52 @@
+services:
+  api:
+    env_file:
+      - ${PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      APP_ENV: production
+      DATABASE_AUTO_CREATE: "false"
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: http://ollama:11434
+    command: >
+      sh -c "alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+
+  mcp:
+    env_file:
+      - ${PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      APP_ENV: production
+      DATABASE_AUTO_CREATE: "false"
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: http://ollama:11434
+      MCP_SERVICE_TOKEN_SHA256: ${MCP_SERVICE_TOKEN_SHA256}
+      MCP_SERVICE_ACCOUNT_EMAIL: ${MCP_SERVICE_ACCOUNT_EMAIL}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:8001/mcp}
+    command: python -m app.mcp.server
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+
+  postgres:
+    env_file:
+      - ${PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+  qdrant:
+    volumes:
+      - qdrant_storage:/qdrant/storage
+      - ./backups/qdrant:/qdrant/snapshots
+
+  ollama:
+    volumes:
+      - ollama_storage:/root/.ollama

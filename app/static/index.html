@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Company Document RAG</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="app-panel" aria-label="Company document RAG">
+        <header class="app-header">
+          <div class="brand-block">
+            <h1>Company Document RAG</h1>
+            <p id="auth-status-text">Signed out</p>
+          </div>
+          <nav class="view-nav" aria-label="Primary">
+            <button
+              class="view-nav-button is-active"
+              type="button"
+              data-view-target="chat-view"
+              aria-pressed="true"
+            >
+              Chat
+            </button>
+            <button
+              class="view-nav-button"
+              type="button"
+              data-view-target="analytics-view"
+              aria-pressed="false"
+            >
+              Analytics
+            </button>
+          </nav>
+          <form id="auth-form" class="auth-form">
+            <label class="sr-only" for="email-input">Email</label>
+            <input
+              id="email-input"
+              name="email"
+              type="email"
+              placeholder="Email"
+              autocomplete="email"
+              required
+            >
+            <label class="sr-only" for="password-input">Password</label>
+            <input
+              id="password-input"
+              name="password"
+              type="password"
+              placeholder="Password"
+              autocomplete="current-password"
+              required
+            >
+            <button id="login-button" type="submit">Login</button>
+            <button id="register-button" type="button">Register</button>
+          </form>
+          <button id="logout-button" class="logout-button" type="button" hidden>
+            Logout
+          </button>
+        </header>
+
+        <section
+          id="chat-view"
+          class="view-panel chat-view is-active"
+          aria-label="Chat"
+        >
+          <div id="messages" class="messages" aria-live="polite">
+            <article class="message assistant-message">
+              <div class="message-label">RAG</div>
+              <div class="message-body">
+                Log in to start.
+              </div>
+            </article>
+          </div>
+
+          <form id="chat-form" class="chat-form">
+            <label class="sr-only" for="question-input">Question</label>
+            <textarea
+              id="question-input"
+              name="question"
+              rows="2"
+              placeholder="Type your question..."
+              autocomplete="off"
+            ></textarea>
+            <button id="send-button" type="submit">Send</button>
+          </form>
+        </section>
+
+        <section
+          id="analytics-view"
+          class="view-panel analytics-view"
+          aria-label="Analytics dashboard"
+          hidden
+        >
+          <div class="analytics-toolbar">
+            <div class="analytics-tabs" role="tablist" aria-label="Analytics pages">
+              <button
+                class="analytics-tab is-active"
+                type="button"
+                data-analytics-tab="overview"
+                aria-selected="true"
+              >
+                Overview
+              </button>
+              <button
+                class="analytics-tab"
+                type="button"
+                data-analytics-tab="feedback"
+                aria-selected="false"
+              >
+                Feedback
+              </button>
+              <button
+                class="analytics-tab"
+                type="button"
+                data-analytics-tab="retrieval"
+                aria-selected="false"
+              >
+                Retrieval
+              </button>
+              <button
+                class="analytics-tab"
+                type="button"
+                data-analytics-tab="failed"
+                aria-selected="false"
+              >
+                Failed Queries
+              </button>
+            </div>
+
+            <form id="analytics-filters" class="analytics-filters">
+              <label>
+                <span>Status</span>
+                <select id="analytics-status" name="status">
+                  <option value="">All</option>
+                  <option value="SUCCESS">Success</option>
+                  <option value="ERROR">Error</option>
+                  <option value="PROCESSING">Processing</option>
+                </select>
+              </label>
+              <label>
+                <span>Mode</span>
+                <select id="analytics-retrieval-mode" name="retrieval_mode">
+                  <option value="">All</option>
+                  <option value="vector">Vector</option>
+                  <option value="bm25">BM25</option>
+                  <option value="hybrid">Hybrid</option>
+                </select>
+              </label>
+              <label>
+                <span>From</span>
+                <input id="analytics-created-from" name="created_from" type="datetime-local">
+              </label>
+              <label>
+                <span>To</span>
+                <input id="analytics-created-to" name="created_to" type="datetime-local">
+              </label>
+              <button id="analytics-refresh" type="submit">Refresh</button>
+            </form>
+          </div>
+
+          <div
+            id="analytics-status-message"
+            class="dashboard-status"
+            role="status"
+            aria-live="polite"
+          >
+            Log in to view analytics.
+          </div>
+
+          <div class="analytics-content">
+            <section
+              id="analytics-panel-overview"
+              class="analytics-panel is-active"
+              data-analytics-panel="overview"
+            >
+              <div class="metric-grid">
+                <article class="metric-card">
+                  <span>Total Questions</span>
+                  <strong id="metric-total-questions">--</strong>
+                </article>
+                <article class="metric-card">
+                  <span>Average Latency</span>
+                  <strong id="metric-average-latency">--</strong>
+                </article>
+                <article class="metric-card">
+                  <span>Average Rating</span>
+                  <strong id="metric-average-rating">--</strong>
+                </article>
+                <article class="metric-card">
+                  <span>Bad Answer Rate</span>
+                  <strong id="metric-bad-rate">--</strong>
+                </article>
+                <article class="metric-card">
+                  <span>Good Answer Rate</span>
+                  <strong id="metric-good-rate">--</strong>
+                </article>
+                <article class="metric-card">
+                  <span>Feedback Count</span>
+                  <strong id="metric-feedback-count">--</strong>
+                </article>
+              </div>
+            </section>
+
+            <section
+              id="analytics-panel-feedback"
+              class="analytics-panel"
+              data-analytics-panel="feedback"
+              hidden
+            >
+              <div class="metric-grid compact">
+                <article class="metric-card">
+                  <span>Feedback Count</span>
+                  <strong id="feedback-total">--</strong>
+                </article>
+                <article class="metric-card">
+                  <span>Average Rating</span>
+                  <strong id="feedback-average">--</strong>
+                </article>
+                <article class="metric-card">
+                  <span>Bad Answer Rate</span>
+                  <strong id="feedback-bad-rate">--</strong>
+                </article>
+                <article class="metric-card">
+                  <span>Good Answer Rate</span>
+                  <strong id="feedback-good-rate">--</strong>
+                </article>
+              </div>
+              <div id="rating-distribution" class="bar-list"></div>
+            </section>
+
+            <section
+              id="analytics-panel-retrieval"
+              class="analytics-panel"
+              data-analytics-panel="retrieval"
+              hidden
+            >
+              <div id="retrieval-distribution" class="mode-list"></div>
+            </section>
+
+            <section
+              id="analytics-panel-failed"
+              class="analytics-panel"
+              data-analytics-panel="failed"
+              hidden
+            >
+              <div class="table-wrap">
+                <table class="analytics-table">
+                  <thead>
+                    <tr>
+                      <th>Filename</th>
+                      <th>Failures</th>
+                      <th>Average Score</th>
+                    </tr>
+                  </thead>
+                  <tbody id="failed-documents-table">
+                    <tr>
+                      <td colspan="3">Log in to view analytics.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/chat.js"></script>
+    <script src="/static/dashboard.js"></script>
+  </body>
+</html>
