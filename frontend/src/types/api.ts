@@ -72,6 +72,33 @@ export type IngestResponse = {
   stored_vectors: number;
   saved_chunks: number;
   vector_size: number | null;
+  skipped_files?: number;
+  skip_reasons?: Record<string, number>;
+  already_indexed?: boolean;
+  recovered?: boolean;
+  message?: string | null;
+};
+
+export type FolderIngestFileResult = {
+  relative_path: string;
+  status: "indexed" | "skipped" | "failed";
+  document_id: number | null;
+  filename: string | null;
+  file_type: string | null;
+  chunks: number;
+  stored_vectors: number;
+  reason: string | null;
+  message: string | null;
+};
+
+export type FolderIngestResponse = {
+  folder_name: string;
+  files_discovered: number;
+  indexed: number;
+  skipped: number;
+  failed: number;
+  skip_reasons: Record<string, number>;
+  results: FolderIngestFileResult[];
 };
 
 export type DeleteDocumentResponse = {
@@ -105,6 +132,20 @@ export type RevokeDocumentPermissionResponse = {
   revoked: boolean;
 };
 
+export type CodeRepositoryPermissionResponse = {
+  id: number;
+  repository_id: number;
+  user_id: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RevokeCodeRepositoryPermissionResponse = {
+  repository_id: number;
+  user_id: number;
+  revoked: boolean;
+};
+
 export type CodeIngestRequest = {
   repo_url: string;
   branch: string;
@@ -112,12 +153,16 @@ export type CodeIngestRequest = {
   exclude_globs?: string[];
 };
 
+export type CodeSourceType = "GIT_REPOSITORY" | "LOCAL_FOLDER";
+
 export type CodeIngestResponse = {
   repository_id: number;
   repo_name: string;
-  repo_url: string;
-  branch: string;
-  commit_sha: string;
+  source_type: CodeSourceType;
+  repo_url: string | null;
+  branch: string | null;
+  commit_sha: string | null;
+  source_fingerprint: string | null;
   storage_path: string;
   status: string;
   files: number;
@@ -127,6 +172,76 @@ export type CodeIngestResponse = {
   stored_vectors: number;
   saved_chunks: number;
   vector_size: number | null;
+  skipped_files?: number;
+  skip_reasons?: Record<string, number>;
+  already_indexed?: boolean;
+  recovered?: boolean;
+  message?: string | null;
+};
+
+export type CodeRepositorySummary = {
+  id: number;
+  repo_name: string;
+  source_type: CodeSourceType;
+  repo_url: string | null;
+  branch: string | null;
+  commit_sha: string | null;
+  source_fingerprint: string | null;
+  storage_path: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  file_count: number;
+  chunk_count: number;
+};
+
+export type CodeFileDetail = {
+  id: number;
+  file_path: string;
+  language: string;
+  file_hash: string;
+  size_bytes: number;
+  created_at: string;
+  chunk_count: number;
+};
+
+export type CodeChunkDetail = {
+  id: number;
+  code_file_id: number;
+  qdrant_point_id: string;
+  chunk_index: number;
+  symbol_name: string | null;
+  symbol_kind: string | null;
+  start_line: number;
+  end_line: number;
+  start_char: number;
+  end_char: number;
+  created_at: string;
+};
+
+export type CodeRepositoryDetail = CodeRepositorySummary & {
+  files: CodeFileDetail[];
+  chunks: CodeChunkDetail[];
+};
+
+export type DeleteCodeRepositoryResponse = {
+  repository_id: number;
+  deleted_vectors: number;
+  deleted_metadata: boolean;
+  deleted_files: boolean;
+  cleanup_warning: string | null;
+};
+
+export type ReindexCodeRepositoryResponse = {
+  repository_id: number;
+  status: string;
+  files: number;
+  chunks: number;
+  stored_vectors: number;
+  replaced_vectors: number;
+  skipped_files?: number;
+  skip_reasons?: Record<string, number>;
+  cleanup_warning: string | null;
 };
 
 export type TraceSource = {
@@ -189,6 +304,62 @@ export type FeedbackListResponse = {
   total: number;
   limit: number;
   offset: number;
+};
+
+export type KnowledgeSearchMode = "all" | "documents" | "code";
+export type KnowledgeContentType = "document" | "code";
+
+export type KnowledgeSearchRequest = {
+  query: string;
+  mode: KnowledgeSearchMode;
+  content_types?: KnowledgeContentType[] | null;
+  document_ids?: number[];
+  repository_ids?: number[];
+  languages?: string[];
+  top_k: number;
+};
+
+export type KnowledgeSourceInspection = {
+  text: string;
+  context_start_line: number | null;
+  context_end_line: number | null;
+  highlight_start_line: number | null;
+  highlight_end_line: number | null;
+};
+
+export type KnowledgeSearchResult = {
+  point_id: string;
+  content_type: KnowledgeContentType;
+  title: string;
+  score: number;
+  vector_score: number | null;
+  bm25_score: number | null;
+  fusion_score: number | null;
+  reranker_score: number | null;
+  preview: string;
+  inspection: KnowledgeSourceInspection;
+  document_id: number | null;
+  filename: string | null;
+  source_path: string | null;
+  page_number: number | null;
+  chunk_index: number;
+  repository_id: number | null;
+  repo_name: string | null;
+  source_type: string | null;
+  file_path: string | null;
+  language: string | null;
+  symbol_name: string | null;
+  symbol_kind: string | null;
+  start_line: number | null;
+  end_line: number | null;
+};
+
+export type KnowledgeSearchResponse = {
+  query: string;
+  mode: KnowledgeSearchMode;
+  top_k: number;
+  retrieval_mode: string;
+  results: KnowledgeSearchResult[];
 };
 
 export type AnalyticsFilters = {

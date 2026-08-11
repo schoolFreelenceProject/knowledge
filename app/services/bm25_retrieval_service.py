@@ -196,6 +196,7 @@ def _to_retrieval_result(
 ) -> RetrievalResult:
     metadata = document.metadata
     return RetrievalResult(
+        point_id=document.point_id,
         text=document.text,
         filename=metadata.filename,
         page_number=metadata.page_number,

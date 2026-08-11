@@ -23,10 +23,14 @@ Retrieval should only expose chunks for active indexed versions.
 
 ## Code Repository Reindexing
 
-Current Code RAG indexes immutable repository revisions by `repo_url`, `branch`,
-and `commit_sha`.
+Code RAG indexes repository revisions by `repo_url`, `branch`, and
+`commit_sha`. The current reindex endpoint reparses the stored repository clone
+for the same branch/commit, upserts fresh Qdrant points, replaces file/chunk
+metadata on the existing `code_repositories` row, preserves
+`code_repository_permissions`, then deletes old Qdrant points that are no longer
+referenced.
 
-Production reindexing should:
+Future branch-forward reindexing should:
 
 1. Clone the new commit.
 2. Parse, chunk, embed, and upsert new Qdrant points.
@@ -46,13 +50,13 @@ points that are not referenced by `document_chunks` or `code_chunks` are stale.
 Dry run:
 
 ```bash
-python scripts/audit_vector_consistency.py
+docker compose exec -T api python scripts/audit_vector_consistency.py
 ```
 
 Delete stale Qdrant points:
 
 ```bash
-python scripts/audit_vector_consistency.py --delete-stale
+docker compose exec -T api python scripts/audit_vector_consistency.py --delete-orphans --fail-on-inconsistency
 ```
 
 ## Deleted Document Cleanup
@@ -65,6 +69,18 @@ Document deletion order remains:
 
 If file deletion fails after metadata deletion, the API returns cleanup warning
 details. Operations should investigate and remove orphaned files manually.
+
+## Deleted Code Repository Cleanup
+
+Repository deletion order mirrors document deletion:
+
+1. Delete Qdrant vectors for `code_chunks`.
+2. Delete PostgreSQL repository metadata, files, chunks, and permission rows.
+3. Delete the stored clone under `data/repositories`.
+
+If stored clone deletion fails after metadata deletion, the API returns cleanup
+warning details. Qdrant deletion failure stops the operation before metadata or
+file cleanup.
 
 ## Retention
 

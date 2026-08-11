@@ -115,9 +115,10 @@ def _build_metadata(
     file_type: DocumentFileType,
     page_number: int | None,
 ) -> DocumentMetadata:
+    source_path = _relative_source_path(path=path, base_dir=base_dir)
     return DocumentMetadata(
-        filename=path.name,
-        source_path=_relative_source_path(path=path, base_dir=base_dir),
+        filename=source_path if "/" in source_path else path.name,
+        source_path=source_path,
         file_type=file_type,
         page_number=page_number,
     )

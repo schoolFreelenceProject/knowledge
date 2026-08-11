@@ -7,6 +7,18 @@ class GenerationServiceError(RuntimeError):
     """Raised when answer generation cannot be completed."""
 
 
+INTERNAL_GENERATION_UNAVAILABLE_MESSAGE = (
+    "Internal answer generation is not configured."
+)
+
+
+class InternalGenerationUnavailableError(GenerationServiceError):
+    """Raised when a retrieval-first deployment has no generation provider."""
+
+    def __init__(self) -> None:
+        super().__init__(INTERNAL_GENERATION_UNAVAILABLE_MESSAGE)
+
+
 class OllamaGenerationService:
     def __init__(self, base_url: str, model: str) -> None:
         self.base_url = base_url
@@ -18,7 +30,8 @@ class OllamaGenerationService:
         except ImportError as exc:
             raise GenerationServiceError(
                 "Answer generation requires ollama. "
-                "Install dependencies with `pip install -r requirements.txt`."
+                "Install dependencies with "
+                "`pip install -r requirements-ollama.txt`."
             ) from exc
 
         try:

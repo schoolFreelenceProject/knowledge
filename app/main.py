@@ -8,10 +8,13 @@ from app.api.analytics import router as analytics_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.code_ingest import router as code_ingest_router
+from app.api.code_repositories import router as code_repositories_router
 from app.api.documents import router as documents_router
 from app.api.feedback import router as feedback_router
 from app.api.health import router as health_router
 from app.api.ingest import router as ingest_router
+from app.api.knowledge_explorer import router as knowledge_explorer_router
+from app.api.permissions import router as permissions_router
 from app.api.traces import router as traces_router
 from app.api.users import router as users_router
 from app.core.config import get_settings
@@ -30,10 +33,10 @@ configure_logging(settings.log_level)
 
 
 app = FastAPI(
-    title="Company Document RAG API",
+    title="Company Knowledge Base API",
     description=(
-        "MVP foundation for a company document RAG system using FastAPI, "
-        "Qdrant, Ollama, and sentence-transformers."
+        "Retrieval-first Company Knowledge Base API using FastAPI, Qdrant, "
+        "PostgreSQL, and sentence-transformers."
     ),
     version="0.1.0",
 )
@@ -54,8 +57,11 @@ if settings.security_headers_enabled:
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(code_ingest_router)
+app.include_router(code_repositories_router)
 app.include_router(documents_router)
 app.include_router(ingest_router)
+app.include_router(knowledge_explorer_router)
+app.include_router(permissions_router)
 app.include_router(traces_router)
 app.include_router(feedback_router)
 app.include_router(analytics_router)

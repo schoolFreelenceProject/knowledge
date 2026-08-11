@@ -1,5 +1,8 @@
 from app.schemas.chat import ChatResponse
-from app.services.generation_service import RAGGenerationService
+from app.services.generation_service import (
+    InternalGenerationUnavailableError,
+    RAGGenerationService,
+)
 from app.services.retrieval_service import RetrievalService
 from app.services.trace_context import get_current_trace_context
 
@@ -8,7 +11,7 @@ class RAGChatService:
     def __init__(
         self,
         retrieval_service: RetrievalService,
-        generation_service: RAGGenerationService,
+        generation_service: RAGGenerationService | None,
     ) -> None:
         self.retrieval_service = retrieval_service
         self.generation_service = generation_service
@@ -19,6 +22,9 @@ class RAGChatService:
         top_k: int,
         allowed_point_ids: list[str] | None = None,
     ) -> ChatResponse:
+        if self.generation_service is None:
+            raise InternalGenerationUnavailableError()
+
         retrieval_results = self.retrieval_service.retrieve(
             query=question,
             top_k=top_k,

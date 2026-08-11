@@ -1,26 +1,37 @@
 # Production Deployment
 
-This deployment keeps the existing RAG architecture unchanged:
+This deployment keeps the Knowledge Base retrieval architecture unchanged:
 
 ```text
 Browser
  -> FastAPI
- -> Auth / ACL / RAG services
+ -> Auth / ACL / Retrieval services
  -> PostgreSQL metadata
  -> Qdrant vectors
- -> Ollama generation
 
-Hermes
+Codex / Claude Code / MCP Client
  -> MCP service
- -> existing Auth / ACL / RAG services
+ -> existing Auth / ACL / Retrieval services
  -> PostgreSQL metadata
  -> Qdrant vectors
- -> Ollama generation
 ```
+
+The default Docker stack starts `postgres`, `qdrant`, `api`, `mcp`, and
+`frontend`. Ollama is optional internal answer generation, not a required
+production dependency.
 
 ## Environment
 
-Create a production environment file from the template:
+For a first local release deployment, prefer:
+
+```bash
+./start.sh
+```
+
+It generates local secrets, starts the default Compose stack, waits for
+readiness, and bootstraps the admin and MCP service users.
+
+For a production environment file, start from the template:
 
 ```bash
 cp .env.production.example .env.production
@@ -32,7 +43,7 @@ Update all secrets before starting production:
 - `POSTGRES_PASSWORD`: long random password.
 - `DATABASE_URL`: must match the Postgres credentials.
 - `CODE_REPOSITORY_ALLOWED_HOSTS`: explicit comma-separated Git hosts.
-- `MCP_SERVICE_ACCOUNT_EMAIL`: existing active KB user for Hermes MCP access.
+- `MCP_SERVICE_ACCOUNT_EMAIL`: existing active KB user for MCP access.
 - `MCP_SERVICE_TOKEN_SHA256`: SHA-256 digest of the MCP bearer token.
 - `MCP_PUBLIC_URL`: externally reachable MCP URL, for example
   `https://kb.example.com/mcp`.
@@ -48,7 +59,7 @@ Production startup validates:
 
 Production uses Alembic as the source of truth for schema changes.
 
-Start production:
+Start production after secrets are set:
 
 ```bash
 docker compose \
@@ -65,22 +76,15 @@ alembic upgrade head
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-The MCP service is a separate process:
+The MCP service is a separate default process:
 
 ```bash
 python -m app.mcp.server
 ```
 
-Start it with the Compose `mcp` profile:
-
-```bash
-docker compose \
-  --env-file .env.production \
-  -f docker-compose.yml \
-  -f docker-compose.prod.yml \
-  --profile mcp \
-  up -d --build
-```
+It starts with the default Compose stack. To enable optional Ollama generation,
+set `INTERNAL_GENERATION_ENABLED=true`, build with
+`INSTALL_OLLAMA_CLIENT=true`, and start the `ollama` profile.
 
 For an existing database that was created with `create_all()`:
 
@@ -104,9 +108,11 @@ Endpoints:
 
 - `/health`: shallow liveness for compatibility.
 - `/health/live`: liveness.
-- `/health/ready`: dependency readiness for PostgreSQL, Qdrant, and Ollama.
+- `/health/ready`: dependency readiness for PostgreSQL and Qdrant by default.
+  Ollama is checked only when `INTERNAL_GENERATION_ENABLED=true`.
 
-Docker Compose includes health checks and restart policies for all core services.
+Docker Compose includes health checks and restart policies for all default core
+services, including the frontend and MCP service.
 
 ## Security
 
@@ -131,5 +137,8 @@ use the original client IP.
 - Keep Qdrant collection vector size tied to the embedding model.
 - Run benchmark scripts before enabling reranker in production, because reranking
 adds model latency and memory pressure.
-- Use persistent volumes or managed services for PostgreSQL, Qdrant, Ollama model
-storage, and `data/`.
+- Use persistent volumes or managed services for PostgreSQL, Qdrant, and `data/`.
+  Add Ollama model storage only when optional internal generation is enabled.
+
+See [release.md](release.md) for one-command startup, first-login bootstrap,
+MCP client setup, backup/restore, update, shutdown, and release verification.

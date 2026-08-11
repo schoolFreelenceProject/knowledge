@@ -23,6 +23,7 @@ class DocumentMetadata(BaseModel):
     repo_url: str | None = None
     branch: str | None = None
     commit_sha: str | None = None
+    source_type: str | None = None
     language: str | None = None
     symbol_name: str | None = None
     symbol_kind: str | None = None
@@ -54,6 +55,7 @@ class EmbeddedChunk(BaseModel):
 
 
 class RetrievalResult(BaseModel):
+    point_id: str | None = None
     text: str
     filename: str
     page_number: int | None

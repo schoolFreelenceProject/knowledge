@@ -1,23 +1,29 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+import logging
+from typing import NoReturn
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.api.auth_dependencies import get_current_user
 from app.api.dependencies import get_ingestion_service
-from app.schemas.ingest import IngestResponse
+from app.schemas.ingest import FolderIngestResponse, IngestResponse
 from app.services.auth_service import AuthenticatedUser
 from app.services.audit_log import audit_log
 from app.services.document_loader import DocumentLoaderError
 from app.services.embedding_service import EmbeddingServiceError
 from app.services.ingestion_service import (
     EmptyUploadError,
+    FolderUploadItem,
     IngestionService,
     IngestionServiceError,
     UploadedDocumentConflictError,
     UploadedDocumentStorageError,
 )
 from app.services.metadata_service import MetadataPersistenceError
+from app.services.permission_service import PermissionServiceError
 from app.services.vector_store import VectorStoreError
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["ingestion"])
 
 
@@ -57,29 +63,109 @@ async def ingest_document(
             detail=str(exc),
         ) from exc
     except UploadedDocumentStorageError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Uploaded document could not be saved.",
+            exc,
+        )
     except (IngestionServiceError, DocumentLoaderError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_400_BAD_REQUEST,
+            "Uploaded document could not be processed.",
+            exc,
+        )
     except EmbeddingServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Embedding failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to generate document embeddings.",
+            exc,
+        )
     except VectorStoreError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Vector storage failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to store document vectors.",
+            exc,
+        )
     except MetadataPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Metadata persistence failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to save document metadata.",
+            exc,
+        )
     finally:
         await file.close()
+
+
+@router.post(
+    "/ingest/folder",
+    response_model=FolderIngestResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def ingest_document_folder(
+    folder_name: str = Form(...),
+    relative_paths: list[str] = Form(...),
+    files: list[UploadFile] = File(...),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    ingestion_service: IngestionService = Depends(get_ingestion_service),
+) -> FolderIngestResponse:
+    try:
+        if len(files) != len(relative_paths):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Folder upload files and relative paths do not match.",
+            )
+
+        folder_files = [
+            FolderUploadItem(
+                relative_path=relative_path,
+                content=await upload.read(),
+            )
+            for upload, relative_path in zip(files, relative_paths, strict=True)
+        ]
+        response = ingestion_service.ingest_folder_documents(
+            folder_name=folder_name,
+            files=folder_files,
+            uploader_user_id=current_user.id,
+        )
+        audit_log(
+            "document.folder_ingest",
+            user_id=current_user.id,
+            folder_name=response.folder_name,
+            files_discovered=response.files_discovered,
+            indexed=response.indexed,
+            skipped=response.skipped,
+            failed=response.failed,
+        )
+        return response
+    except HTTPException:
+        raise
+    except (IngestionServiceError, ValueError) as exc:
+        _raise_logged_http_exception(
+            status.HTTP_400_BAD_REQUEST,
+            "Folder upload could not be processed.",
+            exc,
+        )
+    except MetadataPersistenceError as exc:
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to save folder document metadata.",
+            exc,
+        )
+    except PermissionServiceError as exc:
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to grant folder document access.",
+            exc,
+        )
+    finally:
+        for upload in files:
+            await upload.close()
+
+
+def _raise_logged_http_exception(
+    status_code: int,
+    detail: str,
+    exc: Exception,
+) -> NoReturn:
+    logger.exception(detail)
+    raise HTTPException(status_code=status_code, detail=detail) from exc

@@ -34,6 +34,10 @@ class DocumentAccessDeniedError(PermissionServiceError):
     """Raised when a user does not have document access."""
 
 
+class CodeRepositoryAccessDeniedError(PermissionServiceError):
+    """Raised when a user does not have code repository access."""
+
+
 @dataclass(frozen=True)
 class StoredDocumentPermission:
     id: int
@@ -169,6 +173,34 @@ class PermissionService:
                 f"Failed to grant code repository access: {exc}"
             ) from exc
 
+    def revoke_code_repository_access(self, repository_id: int, user_id: int) -> bool:
+        try:
+            self.init_database()
+            with self.session_factory() as session:
+                _get_code_repository_record(
+                    session=session,
+                    repository_id=repository_id,
+                )
+                _get_user_record(session=session, user_id=user_id)
+
+                permission = _get_code_repository_permission_record(
+                    session=session,
+                    repository_id=repository_id,
+                    user_id=user_id,
+                )
+                if permission is None:
+                    return False
+
+                session.delete(permission)
+                session.commit()
+                return True
+        except PermissionTargetNotFoundError:
+            raise
+        except SQLAlchemyError as exc:
+            raise PermissionPersistenceError(
+                f"Failed to revoke code repository access: {exc}"
+            ) from exc
+
     def ensure_user_can_access_document(self, user_id: int, document_id: int) -> None:
         try:
             self.init_database()
@@ -191,6 +223,35 @@ class PermissionService:
                 f"Failed to check document access: {exc}"
             ) from exc
 
+    def ensure_user_can_access_code_repository(
+        self,
+        user_id: int,
+        repository_id: int,
+    ) -> None:
+        try:
+            self.init_database()
+            with self.session_factory() as session:
+                _get_code_repository_record(
+                    session=session,
+                    repository_id=repository_id,
+                )
+                _get_user_record(session=session, user_id=user_id)
+                permission = _get_code_repository_permission_record(
+                    session=session,
+                    repository_id=repository_id,
+                    user_id=user_id,
+                )
+                if permission is None:
+                    raise CodeRepositoryAccessDeniedError(
+                        f"User {user_id} cannot access code repository {repository_id}."
+                    )
+        except (CodeRepositoryAccessDeniedError, PermissionTargetNotFoundError):
+            raise
+        except SQLAlchemyError as exc:
+            raise PermissionPersistenceError(
+                f"Failed to check code repository access: {exc}"
+            ) from exc
+
     def user_has_document_access(self, user_id: int, document_id: int) -> bool:
         try:
             self.ensure_user_can_access_document(
@@ -199,6 +260,20 @@ class PermissionService:
             )
             return True
         except (DocumentAccessDeniedError, PermissionTargetNotFoundError):
+            return False
+
+    def user_has_code_repository_access(
+        self,
+        user_id: int,
+        repository_id: int,
+    ) -> bool:
+        try:
+            self.ensure_user_can_access_code_repository(
+                user_id=user_id,
+                repository_id=repository_id,
+            )
+            return True
+        except (CodeRepositoryAccessDeniedError, PermissionTargetNotFoundError):
             return False
 
     def list_accessible_document_ids(self, user_id: int) -> list[int]:
@@ -223,6 +298,30 @@ class PermissionService:
         except SQLAlchemyError as exc:
             raise PermissionPersistenceError(
                 f"Failed to list accessible documents: {exc}"
+            ) from exc
+
+    def list_accessible_code_repository_ids(self, user_id: int) -> list[int]:
+        try:
+            self.init_database()
+            with self.session_factory() as session:
+                return list(
+                    session.scalars(
+                        select(CodeRepositoryPermissionRecord.repository_id)
+                        .join(
+                            CodeRepositoryRecord,
+                            CodeRepositoryRecord.id
+                            == CodeRepositoryPermissionRecord.repository_id,
+                        )
+                        .where(CodeRepositoryPermissionRecord.user_id == user_id)
+                        .order_by(
+                            CodeRepositoryRecord.created_at.desc(),
+                            CodeRepositoryRecord.id.desc(),
+                        )
+                    ).all()
+                )
+        except SQLAlchemyError as exc:
+            raise PermissionPersistenceError(
+                f"Failed to list accessible code repositories: {exc}"
             ) from exc
 
     def list_accessible_qdrant_point_ids(self, user_id: int) -> list[str]:
@@ -303,6 +402,99 @@ class PermissionService:
         except SQLAlchemyError as exc:
             raise PermissionPersistenceError(
                 f"Failed to list document permissions: {exc}"
+            ) from exc
+
+    def list_document_permissions_for_user(
+        self,
+        user_id: int,
+    ) -> list[StoredDocumentPermission]:
+        try:
+            self.init_database()
+            with self.session_factory() as session:
+                _get_user_record(session=session, user_id=user_id)
+                records = session.scalars(
+                    select(DocumentPermissionRecord)
+                    .join(
+                        DocumentRecord,
+                        DocumentRecord.id == DocumentPermissionRecord.document_id,
+                    )
+                    .where(DocumentPermissionRecord.user_id == user_id)
+                    .order_by(
+                        DocumentRecord.created_at.desc(),
+                        DocumentRecord.id.desc(),
+                    )
+                ).all()
+                return [_to_stored_permission(record) for record in records]
+        except PermissionTargetNotFoundError:
+            raise
+        except SQLAlchemyError as exc:
+            raise PermissionPersistenceError(
+                f"Failed to list user document permissions: {exc}"
+            ) from exc
+
+    def list_code_repository_permissions(
+        self,
+        repository_id: int,
+    ) -> list[StoredCodeRepositoryPermission]:
+        try:
+            self.init_database()
+            with self.session_factory() as session:
+                _get_code_repository_record(
+                    session=session,
+                    repository_id=repository_id,
+                )
+                records = session.scalars(
+                    select(CodeRepositoryPermissionRecord)
+                    .where(
+                        CodeRepositoryPermissionRecord.repository_id
+                        == repository_id
+                    )
+                    .order_by(
+                        CodeRepositoryPermissionRecord.created_at.asc(),
+                        CodeRepositoryPermissionRecord.id.asc(),
+                    )
+                ).all()
+                return [
+                    _to_stored_code_repository_permission(record)
+                    for record in records
+                ]
+        except PermissionTargetNotFoundError:
+            raise
+        except SQLAlchemyError as exc:
+            raise PermissionPersistenceError(
+                f"Failed to list code repository permissions: {exc}"
+            ) from exc
+
+    def list_code_repository_permissions_for_user(
+        self,
+        user_id: int,
+    ) -> list[StoredCodeRepositoryPermission]:
+        try:
+            self.init_database()
+            with self.session_factory() as session:
+                _get_user_record(session=session, user_id=user_id)
+                records = session.scalars(
+                    select(CodeRepositoryPermissionRecord)
+                    .join(
+                        CodeRepositoryRecord,
+                        CodeRepositoryRecord.id
+                        == CodeRepositoryPermissionRecord.repository_id,
+                    )
+                    .where(CodeRepositoryPermissionRecord.user_id == user_id)
+                    .order_by(
+                        CodeRepositoryRecord.created_at.desc(),
+                        CodeRepositoryRecord.id.desc(),
+                    )
+                ).all()
+                return [
+                    _to_stored_code_repository_permission(record)
+                    for record in records
+                ]
+        except PermissionTargetNotFoundError:
+            raise
+        except SQLAlchemyError as exc:
+            raise PermissionPersistenceError(
+                f"Failed to list user code repository permissions: {exc}"
             ) from exc
 
 

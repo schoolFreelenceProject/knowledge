@@ -27,6 +27,11 @@ class DocumentStatus(str, Enum):
     FAILED = "FAILED"
 
 
+class CodeSourceType(str, Enum):
+    GIT_REPOSITORY = "GIT_REPOSITORY"
+    LOCAL_FOLDER = "LOCAL_FOLDER"
+
+
 class UserRecord(Base):
     __tablename__ = "users"
     __table_args__ = (
@@ -177,14 +182,26 @@ class CodeRepositoryRecord(Base):
             "commit_sha",
             name="uq_code_repositories_source_revision",
         ),
+        UniqueConstraint(
+            "source_type",
+            "repo_name",
+            "source_fingerprint",
+            name="uq_code_repositories_local_source_fingerprint",
+        ),
         UniqueConstraint("storage_path", name="uq_code_repositories_storage_path"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    repo_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    source_type: Mapped[str] = mapped_column(
+        String(32),
+        default=CodeSourceType.GIT_REPOSITORY.value,
+        nullable=False,
+    )
+    repo_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     repo_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    branch: Mapped[str] = mapped_column(String(255), nullable=False)
-    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     storage_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32),

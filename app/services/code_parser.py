@@ -19,6 +19,7 @@ LANGUAGE_BY_SUFFIX = {
     ".h": "c",
     ".cpp": "cpp",
     ".hpp": "cpp",
+    ".php": "php",
 }
 
 SYMBOL_KIND_BY_NODE_TYPE = {
@@ -42,9 +43,16 @@ SYMBOL_KIND_BY_NODE_TYPE = {
     "class_specifier": "class",
 }
 
+# The native C/C++ parser can segfault on real ROS2 repositories in the runtime image.
+TREE_SITTER_FALLBACK_LANGUAGES = {"c", "cpp", "php"}
+
 
 class CodeParserError(RuntimeError):
     """Raised when a source code file cannot be parsed."""
+
+
+class BinaryCodeFileError(CodeParserError):
+    """Raised when a supported source file appears to be binary or non-UTF-8."""
 
 
 @dataclass(frozen=True)
@@ -61,10 +69,11 @@ class CodeSymbol:
 
 @dataclass(frozen=True)
 class ParsedCodeFile:
-    repo_url: str
+    repo_url: str | None
     repo_name: str
-    branch: str
-    commit_sha: str
+    branch: str | None
+    commit_sha: str | None
+    source_type: str
     file_path: str
     language: str
     text: str
@@ -79,10 +88,12 @@ class TreeSitterCodeParser:
         self,
         file_path: Path,
         repository_root: Path,
-        repo_url: str,
+        repo_url: str | None,
         repo_name: str,
-        branch: str,
-        commit_sha: str,
+        branch: str | None,
+        commit_sha: str | None,
+        source_type: str = "GIT_REPOSITORY",
+        source_path_prefix: str | None = None,
     ) -> ParsedCodeFile:
         language = detect_language(file_path)
         if language is None:
@@ -90,47 +101,89 @@ class TreeSitterCodeParser:
 
         try:
             raw_bytes = file_path.read_bytes()
+            if _looks_binary(raw_bytes):
+                raise BinaryCodeFileError(f"Code file appears to be binary: {file_path}")
             text = raw_bytes.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise CodeParserError(f"Code file is not valid UTF-8: {file_path}") from exc
+            raise BinaryCodeFileError(f"Code file is not valid UTF-8: {file_path}") from exc
         except OSError as exc:
             raise CodeParserError(f"Failed to read code file '{file_path}': {exc}") from exc
 
-        try:
-            from tree_sitter_language_pack import get_parser
-        except ImportError as exc:
-            raise CodeParserError(
-                "Code parsing requires tree-sitter-language-pack. "
-                "Install dependencies with `pip install -r requirements.txt`."
-            ) from exc
-
-        try:
-            parser = get_parser(language)
-            tree = parser.parse(raw_bytes)
-        except Exception as exc:
-            raise CodeParserError(
-                f"Failed to parse '{file_path}' as {language}: {exc}"
-            ) from exc
-
         repository_root = repository_root.resolve()
         relative_path = _relative_path(file_path=file_path, repository_root=repository_root)
+        symbols: list[CodeSymbol] = []
+        if language not in TREE_SITTER_FALLBACK_LANGUAGES:
+            try:
+                from tree_sitter_language_pack import get_parser
+            except ImportError as exc:
+                raise CodeParserError(
+                    "Code parsing requires tree-sitter-language-pack. "
+                    "Install dependencies with `pip install -r requirements.txt`."
+                ) from exc
+
+            try:
+                parser = get_parser(language)
+                tree = parser.parse(raw_bytes)
+                symbols = _collect_symbols(
+                    tree.root_node,
+                    text=text,
+                    raw_bytes=raw_bytes,
+                )
+            except Exception as exc:
+                raise CodeParserError(
+                    f"Failed to parse '{file_path}' as {language}: {exc}"
+                ) from exc
+
         return ParsedCodeFile(
             repo_url=repo_url,
             repo_name=repo_name,
             branch=branch,
             commit_sha=commit_sha,
+            source_type=source_type,
             file_path=relative_path,
             language=language,
             text=text,
             file_hash=hashlib.sha256(raw_bytes).hexdigest(),
             size_bytes=len(raw_bytes),
-            source_path=f"{repo_name}@{commit_sha}/{relative_path}",
-            symbols=_collect_symbols(tree.root_node, text=text, raw_bytes=raw_bytes),
+            source_path=_build_source_path(
+                repo_name=repo_name,
+                commit_sha=commit_sha,
+                relative_path=relative_path,
+                source_path_prefix=source_path_prefix,
+            ),
+            symbols=symbols,
         )
 
 
 def detect_language(file_path: Path) -> str | None:
     return LANGUAGE_BY_SUFFIX.get(file_path.suffix.lower())
+
+
+def _looks_binary(raw_bytes: bytes) -> bool:
+    sample = raw_bytes[:4096]
+    if b"\x00" in sample:
+        return True
+    if not sample:
+        return False
+
+    control_bytes = sum(
+        1
+        for byte in sample
+        if byte < 32 and byte not in {9, 10, 12, 13}
+    )
+    return control_bytes / len(sample) > 0.30
+
+
+def _build_source_path(
+    repo_name: str,
+    commit_sha: str | None,
+    relative_path: str,
+    source_path_prefix: str | None,
+) -> str:
+    if source_path_prefix:
+        return f"{source_path_prefix.rstrip('/')}/{relative_path}"
+
+    return f"{repo_name}@{commit_sha}/{relative_path}"
 
 
 def _collect_symbols(root_node: Any, text: str, raw_bytes: bytes) -> list[CodeSymbol]:

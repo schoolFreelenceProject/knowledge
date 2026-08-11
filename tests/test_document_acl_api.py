@@ -3,15 +3,21 @@ from datetime import datetime, timezone
 import pytest
 from fastapi import HTTPException
 
-from app.api.documents import get_document, list_documents
-from app.schemas.document_management import DocumentDetail, DocumentSummary
+from app.api.documents import get_document, list_documents, reindex_document
+from app.schemas.document_management import (
+    DocumentDetail,
+    DocumentSummary,
+    ReindexDocumentResponse,
+)
 from app.services.auth_service import AuthenticatedUser
+from app.services.metadata_service import MetadataPersistenceError
 from app.services.permission_service import DocumentAccessDeniedError
 
 
 class FakeDocumentManagementService:
-    def __init__(self) -> None:
+    def __init__(self, reindex_error: Exception | None = None) -> None:
         self.document_ids: list[int] | None = None
+        self.reindex_error = reindex_error
 
     def list_documents(self, document_ids=None):
         self.document_ids = document_ids
@@ -31,6 +37,19 @@ class FakeDocumentManagementService:
             chunk_count=0,
         )
         return DocumentDetail(**summary.model_dump(), chunks=[])
+
+    def reindex_document(self, document_id):
+        if self.reindex_error is not None:
+            raise self.reindex_error
+
+        return ReindexDocumentResponse(
+            document_id=document_id,
+            status="INDEXED",
+            chunks=1,
+            stored_vectors=1,
+            replaced_vectors=0,
+            cleanup_warning=None,
+        )
 
 
 class FakePermissionService:
@@ -81,3 +100,27 @@ def test_get_document_blocks_inaccessible_document() -> None:
         )
 
     assert exc_info.value.status_code == 403
+
+
+def test_reindex_document_hides_internal_metadata_errors() -> None:
+    raw_error = (
+        'psycopg.errors.UniqueViolation: duplicate key value violates unique '
+        'constraint "uq_document_chunks_position"; SQL: INSERT INTO '
+        "document_chunks ... params: {'document_id': 3}"
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        reindex_document(
+            document_id=3,
+            current_user=_build_user(),
+            document_management_service=FakeDocumentManagementService(
+                reindex_error=MetadataPersistenceError(raw_error)
+            ),
+            permission_service=FakePermissionService(),
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Unable to update document metadata."
+    assert "psycopg" not in exc_info.value.detail
+    assert "INSERT" not in exc_info.value.detail
+    assert "document_chunks" not in exc_info.value.detail

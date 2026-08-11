@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   BarChart3,
   BookOpen,
+  Code2,
   Clock3,
   MessageSquare,
   Star,
@@ -11,18 +12,22 @@ import {
 
 import { getAnalyticsSummary } from "../api/analytics";
 import { getErrorMessage } from "../api/client";
+import { listCodeRepositories } from "../api/code";
 import { listDocuments } from "../api/documents";
 import { listUsers } from "../api/users";
 import { PageHeader } from "../components/ui/PageHeader";
 import { StatCard } from "../components/ui/StatCard";
 import { ErrorState, LoadingState } from "../components/ui/StatusState";
-import { UnavailableState } from "../components/ui/UnavailableState";
 import { formatMs, formatNumber, formatRate, formatRating } from "../utils/format";
 
 export function DashboardPage() {
   const documentsQuery = useQuery({
     queryKey: ["documents"],
     queryFn: listDocuments,
+  });
+  const repositoriesQuery = useQuery({
+    queryKey: ["code-repositories"],
+    queryFn: listCodeRepositories,
   });
   const summaryQuery = useQuery({
     queryKey: ["analytics", "summary", {}],
@@ -33,9 +38,18 @@ export function DashboardPage() {
     queryFn: listUsers,
   });
 
-  const isLoading = documentsQuery.isLoading || summaryQuery.isLoading || usersQuery.isLoading;
-  const error = documentsQuery.error || summaryQuery.error || usersQuery.error;
+  const isLoading =
+    documentsQuery.isLoading ||
+    repositoriesQuery.isLoading ||
+    summaryQuery.isLoading ||
+    usersQuery.isLoading;
+  const error =
+    documentsQuery.error ||
+    repositoriesQuery.error ||
+    summaryQuery.error ||
+    usersQuery.error;
   const documents = documentsQuery.data ?? [];
+  const repositories = repositoriesQuery.data ?? [];
   const summary = summaryQuery.data;
   const users = usersQuery.data ?? [];
 
@@ -60,6 +74,16 @@ export function DashboardPage() {
           value={formatNumber(documents.length)}
           hint={`${formatNumber(documents.reduce((sum, item) => sum + item.chunk_count, 0))} chunks`}
           icon={<BookOpen className="h-5 w-5" />}
+        />
+        <StatCard
+          label="Code Repositories"
+          value={formatNumber(repositories.length)}
+          hint={`${formatNumber(
+            repositories.reduce((sum, item) => sum + item.file_count, 0),
+          )} files, ${formatNumber(
+            repositories.reduce((sum, item) => sum + item.chunk_count, 0),
+          )} chunks`}
+          icon={<Code2 className="h-5 w-5" />}
         />
         <StatCard
           label="Questions"
@@ -99,12 +123,6 @@ export function DashboardPage() {
         />
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
-        <UnavailableState
-          title="Code repository count unavailable"
-          reason="The backend currently exposes repository ingestion only, not repository listing."
-        />
-      </section>
     </div>
   );
 }

@@ -1,13 +1,21 @@
+import type { AxiosProgressEvent } from "axios";
+
 import { apiClient } from "./client";
 import type {
   DeleteDocumentResponse,
   DocumentDetail,
   DocumentPermissionResponse,
   DocumentSummary,
+  FolderIngestResponse,
   IngestResponse,
   ReindexDocumentResponse,
   RevokeDocumentPermissionResponse,
 } from "../types/api";
+
+export type FolderUploadFile = {
+  file: File;
+  relativePath: string;
+};
 
 export async function listDocuments(): Promise<DocumentSummary[]> {
   const response = await apiClient.get<DocumentSummary[]>("/api/documents");
@@ -23,6 +31,26 @@ export async function uploadDocument(file: File): Promise<IngestResponse> {
   const formData = new FormData();
   formData.append("file", file);
   const response = await apiClient.post<IngestResponse>("/api/ingest", formData);
+  return response.data;
+}
+
+export async function uploadDocumentFolder(
+  folderName: string,
+  files: FolderUploadFile[],
+  onUploadProgress?: (progressEvent: AxiosProgressEvent) => void,
+): Promise<FolderIngestResponse> {
+  const formData = new FormData();
+  formData.append("folder_name", folderName);
+  for (const item of files) {
+    formData.append("relative_paths", item.relativePath);
+    formData.append("files", item.file, item.relativePath.split("/").pop() || item.file.name);
+  }
+
+  const response = await apiClient.post<FolderIngestResponse>(
+    "/api/ingest/folder",
+    formData,
+    { onUploadProgress },
+  );
   return response.data;
 }
 

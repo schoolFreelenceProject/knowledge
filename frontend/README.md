@@ -42,11 +42,13 @@ Future hardening should move browser auth to httpOnly secure cookies. That will
 need backend support for cookie issuing, CSRF protection, and logout/session
 revocation endpoints.
 
-## Backend API Gaps
+## Current Scope
 
-The UI does not invent data for unavailable APIs. These areas show unavailable
-states until backend endpoints exist:
+The UI manages the Company Knowledge Base REST surface:
 
-- code repository list/detail/delete/reindex
-- code repository permission management
-- role/tenant management
+- document upload, list/detail, delete, reindex, and ACL rows
+- code repository ingest, list/detail, delete, reindex, and ACL rows
+- user creation/activation
+- chat traces, feedback, retrieval analytics, and health
+
+Role, tenant, department, and ownership workflows are intentionally out of scope.

@@ -1,3 +1,6 @@
+import logging
+from typing import NoReturn
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.auth_dependencies import get_current_user
@@ -38,6 +41,7 @@ from app.services.permission_service import (
 from app.services.vector_store import VectorStoreError
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 
@@ -55,15 +59,17 @@ def list_documents(
         )
         return document_management_service.list_documents(document_ids=document_ids)
     except PermissionPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Permission lookup failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to check document permissions.",
+            exc,
+        )
     except MetadataPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Metadata read failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to load documents.",
+            exc,
+        )
 
 
 @router.get("/{document_id}", response_model=DocumentDetail)
@@ -93,20 +99,22 @@ def get_document(
             detail=str(exc),
         ) from exc
     except PermissionPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Permission lookup failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to check document permissions.",
+            exc,
+        )
     except DocumentMetadataNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
     except MetadataPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Metadata read failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to load document metadata.",
+            exc,
+        )
 
 
 @router.delete("/{document_id}", response_model=DeleteDocumentResponse)
@@ -144,30 +152,34 @@ def delete_document(
             detail=str(exc),
         ) from exc
     except PermissionPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Permission lookup failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to check document permissions.",
+            exc,
+        )
     except DocumentMetadataNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
     except VectorStoreError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Qdrant cleanup failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to delete document vectors.",
+            exc,
+        )
     except MetadataPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Metadata delete failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to delete document metadata.",
+            exc,
+        )
     except DocumentStorageError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_409_CONFLICT,
+            "Stored document could not be accessed.",
+            exc,
+        )
 
 
 @router.post("/{document_id}/reindex", response_model=ReindexDocumentResponse)
@@ -205,40 +217,46 @@ def reindex_document(
             detail=str(exc),
         ) from exc
     except PermissionPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Permission lookup failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to check document permissions.",
+            exc,
+        )
     except DocumentMetadataNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
     except DocumentStorageError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_409_CONFLICT,
+            "Stored document could not be accessed.",
+            exc,
+        )
     except (DocumentManagementError, DocumentLoaderError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_400_BAD_REQUEST,
+            "Document could not be reindexed from its stored file.",
+            exc,
+        )
     except EmbeddingServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Embedding failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to generate document embeddings.",
+            exc,
+        )
     except VectorStoreError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Qdrant reindex failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to update document vectors.",
+            exc,
+        )
     except MetadataPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Metadata update failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to update document metadata.",
+            exc,
+        )
 
 
 @router.get(
@@ -273,10 +291,11 @@ def list_document_permissions(
             detail=str(exc),
         ) from exc
     except PermissionPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Permission lookup failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to check document permissions.",
+            exc,
+        )
 
 
 @router.post(
@@ -318,10 +337,11 @@ def grant_document_permission(
             detail=str(exc),
         ) from exc
     except PermissionPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Permission update failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to update document permissions.",
+            exc,
+        )
 
 
 @router.delete(
@@ -367,10 +387,11 @@ def revoke_document_permission(
             detail=str(exc),
         ) from exc
     except PermissionPersistenceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Permission update failed: {exc}",
-        ) from exc
+        _raise_logged_http_exception(
+            status.HTTP_502_BAD_GATEWAY,
+            "Unable to update document permissions.",
+            exc,
+        )
 
 
 def _ensure_document_access(
@@ -382,3 +403,12 @@ def _ensure_document_access(
         user_id=current_user.id,
         document_id=document_id,
     )
+
+
+def _raise_logged_http_exception(
+    status_code: int,
+    detail: str,
+    exc: Exception,
+) -> NoReturn:
+    logger.exception(detail)
+    raise HTTPException(status_code=status_code, detail=detail) from exc

@@ -195,6 +195,7 @@ def _build_chunk(
             repo_url=parsed_file.repo_url,
             branch=parsed_file.branch,
             commit_sha=parsed_file.commit_sha,
+            source_type=parsed_file.source_type,
             language=parsed_file.language,
             symbol_name=symbol.name,
             symbol_kind=symbol.kind,

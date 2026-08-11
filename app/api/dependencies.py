@@ -9,6 +9,9 @@ from app.services.code_chunker import CodeChunkingConfig
 from app.services.code_ingestion_service import CodeIngestionService
 from app.services.code_metadata_service import CodeMetadataService
 from app.services.code_parser import TreeSitterCodeParser
+from app.services.code_repository_management_service import (
+    CodeRepositoryManagementService,
+)
 from app.services.code_repository_loader import GitRepositoryLoader
 from app.services.document_management_service import DocumentManagementService
 from app.services.embedding_service import SentenceTransformersEmbeddingService
@@ -23,6 +26,7 @@ from app.services.hybrid_fusion_service import (
 )
 from app.services.ingestion_service import IngestionService
 from app.services.knowledge_tool_service import KnowledgeToolService
+from app.services.knowledge_explorer_service import KnowledgeExplorerService
 from app.services.metadata_service import DocumentMetadataService
 from app.services.permission_service import PermissionService
 from app.services.prompt_builder import RAGPromptBuilder
@@ -41,7 +45,7 @@ REPOSITORIES_DIR = PROJECT_ROOT / "data" / "repositories"
 
 
 @lru_cache
-def get_chat_service() -> RAGChatService:
+def get_retrieval_service() -> RetrievalService:
     settings = get_settings()
     embedding_service = SentenceTransformersEmbeddingService(
         model_name=settings.embedding_model_name,
@@ -50,7 +54,7 @@ def get_chat_service() -> RAGChatService:
         url=settings.qdrant_url,
         collection_name=settings.qdrant_collection_name,
     )
-    retrieval_service = RetrievalService(
+    return RetrievalService(
         embedding_service=embedding_service,
         vector_store=vector_store,
         bm25_retrieval_service=BM25RetrievalService(
@@ -80,16 +84,23 @@ def get_chat_service() -> RAGChatService:
             reranker_candidate_size=settings.reranker_candidate_size,
         ),
     )
-    generation_service = RAGGenerationService(
-        ollama_service=OllamaGenerationService(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_model,
-        ),
-        prompt_builder=RAGPromptBuilder(),
-    )
+
+
+@lru_cache
+def get_chat_service() -> RAGChatService:
+    settings = get_settings()
+    generation_service = None
+    if settings.internal_generation_enabled:
+        generation_service = RAGGenerationService(
+            ollama_service=OllamaGenerationService(
+                base_url=settings.ollama_base_url,
+                model=settings.ollama_model,
+            ),
+            prompt_builder=RAGPromptBuilder(),
+        )
 
     return RAGChatService(
-        retrieval_service=retrieval_service,
+        retrieval_service=get_retrieval_service(),
         generation_service=generation_service,
     )
 
@@ -188,6 +199,37 @@ def get_code_ingestion_service() -> CodeIngestionService:
 
 
 @lru_cache
+def get_code_repository_management_service() -> CodeRepositoryManagementService:
+    settings = get_settings()
+    embedding_service = SentenceTransformersEmbeddingService(
+        model_name=settings.embedding_model_name,
+    )
+    vector_store = QdrantVectorStore(
+        url=settings.qdrant_url,
+        collection_name=settings.qdrant_collection_name,
+    )
+    repository_loader = GitRepositoryLoader(
+        repositories_dir=REPOSITORIES_DIR,
+        allowed_hosts=settings.code_repository_allowed_hosts,
+    )
+    return CodeRepositoryManagementService(
+        repositories_dir=REPOSITORIES_DIR,
+        repository_loader=repository_loader,
+        parser=TreeSitterCodeParser(),
+        chunk_config=CodeChunkingConfig(
+            max_chunk_chars=settings.document_chunk_size,
+            overlap_lines=max(0, settings.document_chunk_overlap // 80),
+        ),
+        embedding_service=embedding_service,
+        vector_store=vector_store,
+        metadata_service=CodeMetadataService(
+            session_factory=get_session_factory(),
+            init_database=init_db,
+        ),
+    )
+
+
+@lru_cache
 def get_document_management_service() -> DocumentManagementService:
     settings = get_settings()
     chunk_config = ChunkingConfig(
@@ -220,10 +262,28 @@ def get_knowledge_tool_service() -> KnowledgeToolService:
     chat_service = get_chat_service()
     return KnowledgeToolService(
         chat_service=chat_service,
-        retrieval_service=chat_service.retrieval_service,
+        retrieval_service=get_retrieval_service(),
         permission_service=get_permission_service(),
         document_management_service=get_document_management_service(),
         trace_service=get_rag_trace_service(),
+    )
+
+
+@lru_cache
+def get_knowledge_explorer_service() -> KnowledgeExplorerService:
+    return KnowledgeExplorerService(
+        retrieval_service=get_retrieval_service(),
+        permission_service=get_permission_service(),
+        document_metadata_service=DocumentMetadataService(
+            session_factory=get_session_factory(),
+            init_database=init_db,
+        ),
+        code_metadata_service=CodeMetadataService(
+            session_factory=get_session_factory(),
+            init_database=init_db,
+        ),
+        documents_dir=DOCUMENTS_DIR,
+        repositories_dir=REPOSITORIES_DIR,
     )
 
 
@@ -234,4 +294,5 @@ def get_health_service() -> HealthService:
         database_engine_factory=get_database_engine,
         qdrant_url=settings.qdrant_url,
         ollama_base_url=settings.ollama_base_url,
+        internal_generation_enabled=settings.internal_generation_enabled,
     )

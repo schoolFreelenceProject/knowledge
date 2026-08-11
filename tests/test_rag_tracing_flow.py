@@ -218,6 +218,37 @@ def test_chat_api_trace_failure_does_not_break_response() -> None:
     assert response.headers[REQUEST_ID_HEADER] == "req-best-effort"
 
 
+def test_chat_api_returns_safe_error_when_generation_is_not_configured() -> None:
+    trace_service = FakeTraceService()
+    response = Response()
+    chat_service = RAGChatService(
+        retrieval_service=FakeRetrievalService(results=[_build_result()]),
+        generation_service=None,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        chat(
+            chat_request=ChatRequest(question="What is the leave policy?"),
+            http_request=_build_http_request("req-no-generation"),
+            response=response,
+            current_user=_build_user(),
+            chat_service=chat_service,
+            permission_service=FakePermissionService(),
+            trace_service=trace_service,
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Internal answer generation is not configured."
+    assert response.headers[REQUEST_ID_HEADER] == "req-no-generation"
+    saved_trace = trace_service.saved_traces[0]
+    assert saved_trace.status == "ERROR"
+    assert saved_trace.model_name == "none"
+    assert (
+        saved_trace.error_message
+        == "Internal answer generation is not configured."
+    )
+
+
 def test_chat_api_saves_error_trace_for_empty_question() -> None:
     trace_service = FakeTraceService()
     response = Response()

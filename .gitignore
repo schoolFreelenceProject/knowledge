@@ -4,13 +4,18 @@
 !.env.production.example
 
 # Runtime data
-data/documents/
+backups/
+data/documents/*
+!data/documents/.gitkeep
+data/evaluation/
 data/repositories/
 data/uploads/
 
 # Vector/database data
+ollama_storage/
 qdrant_storage/
 postgres_data/
+*.snapshot
 
 # Frontend
 frontend/node_modules/
@@ -23,3 +28,4 @@ __pycache__/
 
 # Logs
 *.log
+.aider*

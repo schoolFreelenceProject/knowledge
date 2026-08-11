@@ -24,6 +24,7 @@ def _parsed_file() -> ParsedCodeFile:
         repo_name="repo",
         branch="main",
         commit_sha="a" * 40,
+        source_type="GIT_REPOSITORY",
         file_path="app.py",
         language="python",
         text="def hello():\n    return 'hi'\n",

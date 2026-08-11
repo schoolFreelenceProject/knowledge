@@ -9,6 +9,7 @@ DEFAULT_DOCUMENT_CHUNK_OVERLAP = 150
 DEFAULT_EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_QDRANT_URL = "http://localhost:6333"
 DEFAULT_QDRANT_COLLECTION_NAME = "company_documents"
+DEFAULT_INTERNAL_GENERATION_ENABLED = False
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_DATABASE_URL = (
@@ -54,6 +55,7 @@ class AppSettings:
     embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME
     qdrant_url: str = DEFAULT_QDRANT_URL
     qdrant_collection_name: str = DEFAULT_QDRANT_COLLECTION_NAME
+    internal_generation_enabled: bool = DEFAULT_INTERNAL_GENERATION_ENABLED
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
     ollama_model: str = DEFAULT_OLLAMA_MODEL
     database_url: str = DEFAULT_DATABASE_URL
@@ -112,6 +114,10 @@ def get_settings() -> AppSettings:
         qdrant_collection_name=_read_str(
             name="QDRANT_COLLECTION_NAME",
             default=DEFAULT_QDRANT_COLLECTION_NAME,
+        ),
+        internal_generation_enabled=_read_bool(
+            name="INTERNAL_GENERATION_ENABLED",
+            default=DEFAULT_INTERNAL_GENERATION_ENABLED,
         ),
         ollama_base_url=_read_str(
             name="OLLAMA_BASE_URL",
@@ -348,11 +354,20 @@ def _validate_qdrant_settings(settings: AppSettings) -> None:
 
 
 def _validate_ollama_settings(settings: AppSettings) -> None:
+    if not settings.internal_generation_enabled:
+        return
+
     if not settings.ollama_base_url:
-        raise ValueError("OLLAMA_BASE_URL cannot be empty.")
+        raise ValueError(
+            "OLLAMA_BASE_URL cannot be empty when "
+            "INTERNAL_GENERATION_ENABLED is true."
+        )
 
     if not settings.ollama_model:
-        raise ValueError("OLLAMA_MODEL cannot be empty.")
+        raise ValueError(
+            "OLLAMA_MODEL cannot be empty when INTERNAL_GENERATION_ENABLED "
+            "is true."
+        )
 
 
 def _validate_database_settings(settings: AppSettings) -> None:

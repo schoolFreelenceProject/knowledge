@@ -1,6 +1,8 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 
+import pytest
+
 from app.schemas.chat import ChatResponse
 from app.schemas.document_management import (
     DocumentChunkDetail,
@@ -8,13 +10,20 @@ from app.schemas.document_management import (
 )
 from app.schemas.documents import ChunkMetadata, RetrievalResult
 from app.services.knowledge_tool_service import KnowledgeToolService
+from app.services.generation_service import InternalGenerationUnavailableError
+from app.services.permission_service import DocumentAccessDeniedError
 from app.services.retrieval_service import RetrievalConfig
 from app.services.trace_context import RAGTraceContext
 
 
 class FakePermissionService:
-    def __init__(self, order: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        order: list[str] | None = None,
+        denied_document_ids: set[int] | None = None,
+    ) -> None:
         self.order = order
+        self.denied_document_ids = denied_document_ids or set()
         self.document_access_checks: list[tuple[int, int]] = []
 
     def list_accessible_qdrant_point_ids(self, user_id: int) -> list[str]:
@@ -24,6 +33,10 @@ class FakePermissionService:
         if self.order is not None:
             self.order.append("permission")
         self.document_access_checks.append((user_id, document_id))
+        if document_id in self.denied_document_ids:
+            raise DocumentAccessDeniedError(
+                f"User {user_id} cannot access document {document_id}."
+            )
 
 
 class FakeRetrievalService:
@@ -75,6 +88,15 @@ class FakeChatService:
             }
         )
         return ChatResponse(answer="Answer", sources=[])
+
+
+class FakeUnavailableChatService:
+    def __init__(self) -> None:
+        self.retrieval_service = FakeRetrievalService(results=[])
+        self.generation_service = None
+
+    def answer_question(self, question, top_k, allowed_point_ids=None):
+        raise InternalGenerationUnavailableError()
 
 
 class FakeDocumentManagementService:
@@ -168,13 +190,18 @@ def _build_code_result() -> RetrievalResult:
 def _build_service(
     retrieval_results: list[RetrievalResult] | None = None,
     order: list[str] | None = None,
+    denied_document_ids: set[int] | None = None,
+    chat_service=None,
 ):
     trace_service = FakeTraceService()
     return (
         KnowledgeToolService(
-            chat_service=FakeChatService(),
+            chat_service=chat_service or FakeChatService(),
             retrieval_service=FakeRetrievalService(retrieval_results or []),
-            permission_service=FakePermissionService(order=order),
+            permission_service=FakePermissionService(
+                order=order,
+                denied_document_ids=denied_document_ids,
+            ),
             document_management_service=FakeDocumentManagementService(order=order),
             trace_service=trace_service,
         ),
@@ -203,6 +230,23 @@ def test_search_knowledge_uses_acl_points_and_content_type_filter() -> None:
             "content_types": ["document"],
             "languages": None,
         }
+    ]
+
+
+def test_search_knowledge_returns_empty_results_for_empty_retrieval() -> None:
+    service, _trace_service = _build_service()
+
+    response = service.search_knowledge(
+        user_id=7,
+        query="no matching documents",
+        top_k=5,
+        request_id="req-empty",
+    )
+
+    assert response.request_id == "req-empty"
+    assert response.results == []
+    assert service.retrieval_service.calls[0]["allowed_point_ids"] == [
+        "point-for-user-7"
     ]
 
 
@@ -241,6 +285,24 @@ def test_get_document_checks_acl_before_reading_document() -> None:
     assert service.permission_service.document_access_checks == [(11, 4)]
 
 
+def test_get_document_denies_acl_access_before_reading_document() -> None:
+    order: list[str] = []
+    service, _trace_service = _build_service(
+        order=order,
+        denied_document_ids={4},
+    )
+
+    with pytest.raises(DocumentAccessDeniedError):
+        service.get_document(
+            user_id=11,
+            document_id=4,
+            request_id="req-denied",
+        )
+
+    assert order == ["permission"]
+    assert service.permission_service.document_access_checks == [(11, 4)]
+
+
 def test_ask_knowledge_reuses_chat_service_and_saves_trace() -> None:
     service, trace_service = _build_service()
 
@@ -262,3 +324,24 @@ def test_ask_knowledge_reuses_chat_service_and_saves_trace() -> None:
     assert trace_service.saved_traces[0].request_id == "req-ask"
     assert trace_service.saved_traces[0].user_id == 12
     assert trace_service.saved_traces[0].status == "SUCCESS"
+
+
+def test_ask_knowledge_returns_explicit_unavailable_response_without_generation() -> None:
+    service, trace_service = _build_service(
+        chat_service=FakeUnavailableChatService(),
+    )
+
+    response = service.ask_knowledge(
+        user_id=12,
+        question="What is the policy?",
+        top_k=2,
+        request_id="req-ask-disabled",
+    )
+
+    assert response.request_id == "req-ask-disabled"
+    assert response.answer.startswith("Internal answer generation is not configured.")
+    assert "search_knowledge" in response.answer
+    assert response.sources == []
+    assert trace_service.saved_traces[0].request_id == "req-ask-disabled"
+    assert trace_service.saved_traces[0].status == "ERROR"
+    assert trace_service.saved_traces[0].model_name == "none"

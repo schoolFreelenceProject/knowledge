@@ -11,7 +11,6 @@ from app.schemas.document_management import (
 from app.services.document_loader import load_document
 from app.services.embedding_service import SentenceTransformersEmbeddingService
 from app.services.metadata_service import (
-    DocumentMetadataNotFoundError,
     DocumentMetadataService,
     MetadataPersistenceError,
     StoredDocumentMetadata,
@@ -87,12 +86,12 @@ class DocumentManagementService:
         try:
             content = document_path.read_bytes()
         except OSError as exc:
-            _mark_failed_best_effort(self.metadata_service, document_id)
             raise DocumentStorageError(
                 f"Failed to read stored document '{document.storage_path}': {exc}"
             ) from exc
 
         new_batch: StoredVectorBatch | None = None
+        old_point_id_set = set(old_point_ids)
         try:
             extracted_documents = load_document(
                 document_path=document_path,
@@ -119,12 +118,12 @@ class DocumentManagementService:
             if new_batch is not None:
                 _cleanup_new_vectors_best_effort(
                     self.vector_store,
-                    new_batch.point_ids,
+                    [
+                        point_id
+                        for point_id in new_batch.point_ids
+                        if point_id not in old_point_id_set
+                    ],
                 )
-            _mark_failed_best_effort(self.metadata_service, document_id)
-            raise
-        except Exception:
-            _mark_failed_best_effort(self.metadata_service, document_id)
             raise
 
         new_point_ids = set(new_batch.point_ids)
@@ -226,16 +225,6 @@ def _cleanup_new_vectors_best_effort(
     try:
         vector_store.delete_points(point_ids)
     except VectorStoreError:
-        pass
-
-
-def _mark_failed_best_effort(
-    metadata_service: DocumentMetadataService,
-    document_id: int,
-) -> None:
-    try:
-        metadata_service.mark_document_failed(document_id)
-    except (DocumentMetadataNotFoundError, MetadataPersistenceError):
         pass
 
 

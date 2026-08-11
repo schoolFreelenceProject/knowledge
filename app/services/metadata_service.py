@@ -46,6 +46,12 @@ class StoredDocumentMetadata:
     chunks: list[StoredChunkMetadata]
 
 
+@dataclass(frozen=True)
+class StoredDocumentChunkSource:
+    document: StoredDocumentMetadata
+    chunk: StoredChunkMetadata
+
+
 class DocumentMetadataNotFoundError(MetadataPersistenceError):
     """Raised when a requested document metadata row does not exist."""
 
@@ -74,31 +80,32 @@ class DocumentMetadataService:
             raise MetadataPersistenceError(
                 "Stored Qdrant point ID count does not match generated chunk count."
             )
+        _validate_unique_chunk_positions(chunks)
 
         first_metadata = extracted_documents[0].metadata
 
         try:
             self.init_database()
             with self.session_factory() as session:
-                document_record = DocumentRecord(
-                    filename=first_metadata.filename,
-                    file_type=first_metadata.file_type,
-                    storage_path=storage_path,
-                    file_hash=file_hash,
-                    status=DocumentStatus.PROCESSING.value,
-                )
-                session.add(document_record)
-                session.flush()
-
-                session.add_all(
-                    _build_chunk_records(
-                        document_id=document_record.id,
-                        chunks=chunks,
-                        qdrant_point_ids=stored_batch.point_ids,
+                with session.begin():
+                    document_record = DocumentRecord(
+                        filename=first_metadata.filename,
+                        file_type=first_metadata.file_type,
+                        storage_path=storage_path,
+                        file_hash=file_hash,
+                        status=DocumentStatus.PROCESSING.value,
                     )
-                )
-                document_record.status = DocumentStatus.INDEXED.value
-                session.commit()
+                    session.add(document_record)
+                    session.flush()
+
+                    session.add_all(
+                        _build_chunk_records(
+                            document_id=document_record.id,
+                            chunks=chunks,
+                            qdrant_point_ids=stored_batch.point_ids,
+                        )
+                    )
+                    document_record.status = DocumentStatus.INDEXED.value
                 return PersistedDocumentMetadata(
                     document_id=document_record.id,
                     saved_chunks=len(chunks),
@@ -152,6 +159,107 @@ class DocumentMetadataService:
                 f"Failed to read document metadata: {exc}"
             ) from exc
 
+    def get_document_chunk_source(
+        self,
+        qdrant_point_id: str,
+    ) -> StoredDocumentChunkSource:
+        try:
+            self.init_database()
+            with self.session_factory() as session:
+                chunk = session.scalars(
+                    select(DocumentChunkRecord)
+                    .options(
+                        selectinload(DocumentChunkRecord.document).selectinload(
+                            DocumentRecord.chunks
+                        )
+                    )
+                    .where(DocumentChunkRecord.qdrant_point_id == qdrant_point_id)
+                ).one_or_none()
+                if chunk is None:
+                    raise DocumentMetadataNotFoundError(
+                        f"Document chunk not found for point: {qdrant_point_id}"
+                    )
+
+                document = _to_stored_document_metadata(chunk.document)
+                stored_chunk = next(
+                    (
+                        item
+                        for item in document.chunks
+                        if item.qdrant_point_id == qdrant_point_id
+                    ),
+                    None,
+                )
+                if stored_chunk is None:
+                    raise DocumentMetadataNotFoundError(
+                        f"Document chunk not found for point: {qdrant_point_id}"
+                    )
+                return StoredDocumentChunkSource(
+                    document=document,
+                    chunk=stored_chunk,
+                )
+        except DocumentMetadataNotFoundError:
+            raise
+        except SQLAlchemyError as exc:
+            raise MetadataPersistenceError(
+                f"Failed to read document chunk metadata: {exc}"
+            ) from exc
+
+    def list_chunk_point_ids(
+        self,
+        document_ids: list[int] | None = None,
+    ) -> list[str]:
+        if document_ids is not None and not document_ids:
+            return []
+
+        try:
+            self.init_database()
+            with self.session_factory() as session:
+                statement = (
+                    select(DocumentChunkRecord.qdrant_point_id)
+                    .join(
+                        DocumentRecord,
+                        DocumentRecord.id == DocumentChunkRecord.document_id,
+                    )
+                    .where(DocumentRecord.status == DocumentStatus.INDEXED.value)
+                    .order_by(
+                        DocumentRecord.id.asc(),
+                        DocumentChunkRecord.chunk_index.asc(),
+                    )
+                )
+                if document_ids is not None:
+                    statement = statement.where(DocumentRecord.id.in_(document_ids))
+
+                return list(session.scalars(statement).all())
+        except SQLAlchemyError as exc:
+            raise MetadataPersistenceError(
+                f"Failed to list document chunk point IDs: {exc}"
+            ) from exc
+
+    def get_document_by_file_hash(
+        self,
+        file_hash: str,
+    ) -> StoredDocumentMetadata | None:
+        try:
+            self.init_database()
+            with self.session_factory() as session:
+                record = session.scalars(
+                    select(DocumentRecord)
+                    .options(selectinload(DocumentRecord.chunks))
+                    .where(DocumentRecord.file_hash == file_hash)
+                    .order_by(
+                        DocumentRecord.created_at.desc(),
+                        DocumentRecord.id.desc(),
+                    )
+                ).first()
+                if record is None:
+                    return None
+
+                return _to_stored_document_metadata(record)
+        except SQLAlchemyError as exc:
+            raise MetadataPersistenceError(
+                f"Failed to read document metadata by file hash: {exc}"
+            ) from exc
+
     def delete_document(self, document_id: int) -> None:
         try:
             self.init_database()
@@ -177,31 +285,38 @@ class DocumentMetadataService:
             raise MetadataPersistenceError(
                 "Stored Qdrant point ID count does not match generated chunk count."
             )
+        _validate_unique_chunk_positions(chunks)
 
         try:
             self.init_database()
             with self.session_factory() as session:
-                record = _get_document_record(session=session, document_id=document_id)
-                record.status = DocumentStatus.PROCESSING.value
-                session.flush()
-
-                session.execute(
-                    delete(DocumentChunkRecord).where(
-                        DocumentChunkRecord.document_id == document_id
-                    )
-                )
-                session.flush()
-
-                session.add_all(
-                    _build_chunk_records(
+                with session.begin():
+                    record = _get_document_record(
+                        session=session,
                         document_id=document_id,
-                        chunks=chunks,
-                        qdrant_point_ids=stored_batch.point_ids,
+                        load_chunks=False,
+                        for_update=True,
                     )
-                )
-                record.file_hash = file_hash
-                record.status = DocumentStatus.INDEXED.value
-                session.commit()
+                    record.status = DocumentStatus.PROCESSING.value
+                    session.flush()
+
+                    session.execute(
+                        delete(DocumentChunkRecord).where(
+                            DocumentChunkRecord.document_id == document_id
+                        ),
+                        execution_options={"synchronize_session": False},
+                    )
+                    session.flush()
+
+                    session.add_all(
+                        _build_chunk_records(
+                            document_id=document_id,
+                            chunks=chunks,
+                            qdrant_point_ids=stored_batch.point_ids,
+                        )
+                    )
+                    record.file_hash = file_hash
+                    record.status = DocumentStatus.INDEXED.value
                 return PersistedDocumentMetadata(
                     document_id=record.id,
                     saved_chunks=len(chunks),
@@ -247,12 +362,36 @@ def _build_chunk_records(
     ]
 
 
-def _get_document_record(session: Session, document_id: int) -> DocumentRecord:
-    record = session.scalars(
-        select(DocumentRecord)
-        .options(selectinload(DocumentRecord.chunks))
-        .where(DocumentRecord.id == document_id)
-    ).one_or_none()
+def _validate_unique_chunk_positions(chunks: list[DocumentChunk]) -> None:
+    seen: set[int] = set()
+    duplicates: set[int] = set()
+    for chunk in chunks:
+        chunk_index = chunk.metadata.chunk_index
+        if chunk_index in seen:
+            duplicates.add(chunk_index)
+        seen.add(chunk_index)
+
+    if duplicates:
+        duplicate_list = ", ".join(str(index) for index in sorted(duplicates))
+        raise MetadataPersistenceError(
+            f"Generated document chunks contain duplicate chunk positions: "
+            f"{duplicate_list}."
+        )
+
+
+def _get_document_record(
+    session: Session,
+    document_id: int,
+    load_chunks: bool = True,
+    for_update: bool = False,
+) -> DocumentRecord:
+    statement = select(DocumentRecord).where(DocumentRecord.id == document_id)
+    if load_chunks:
+        statement = statement.options(selectinload(DocumentRecord.chunks))
+    if for_update:
+        statement = statement.with_for_update()
+
+    record = session.scalars(statement).one_or_none()
     if record is None:
         raise DocumentMetadataNotFoundError(f"Document not found: {document_id}")
 

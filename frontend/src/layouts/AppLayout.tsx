@@ -6,6 +6,7 @@ import {
   Gauge,
   LogOut,
   MessageSquareWarning,
+  Search,
   Shield,
   Users,
   UserCog,
@@ -22,6 +23,7 @@ import { cn } from "../utils/cn";
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Gauge },
   { to: "/documents", label: "Documents", icon: BookOpen },
+  { to: "/knowledge-explorer", label: "Explorer", icon: Search },
   { to: "/code-repositories", label: "Code Repository", icon: Code2 },
   { to: "/users", label: "Users", icon: Users },
   { to: "/users-permissions", label: "Permissions", icon: UserCog },

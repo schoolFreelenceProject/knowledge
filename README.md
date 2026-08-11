@@ -1,6 +1,10 @@
-# Company Document RAG
+# Company Knowledge Base
 
-Company Document RAG သည် company ရဲ့ PDF နှင့် Markdown စာရွက်စာတမ်းတွေကို local AI နဲ့ရှာဖွေဖြေဆိုနိုင်ရန်တည်ဆောက်မယ့် MVP project ဖြစ်သည်။
+Company Knowledge Base သည် company documents နှင့် code sources ကို ingest,
+index, retrieve, inspect, and expose through REST/MCP APIs အဖြစ်ထားသည့်
+retrieval-first service ဖြစ်သည်။ Codex, Claude Code, သို့မဟုတ် အခြား MCP
+clients များသည် reasoning/generation agents အဖြစ် Knowledge Base ကို context
+service အနေနဲ့အသုံးပြုနိုင်သည်။
 
 ## Current Scope
 
@@ -10,17 +14,19 @@ deployment အတွက် hardening လုပ်ထားသည်။
 - FastAPI backend
 - Qdrant vector database
 - PostgreSQL metadata database
-- Ollama local LLM
 - sentence-transformers local embeddings
 - Docker Compose based local runtime
 - PDF and Markdown document ingestion
 - Git repository Code RAG ingestion
+- local document/code folder ingestion
 - JWT authentication
 - Admin Control Panel user creation, listing, and activation
 - user-document and user-repository ACL
 - Vector, BM25, Hybrid Search, and optional Reranker
+- Knowledge Explorer with source inspection
 - Trace, Feedback, Evaluation, and Analytics Dashboard
-- read-only MCP server for Hermes integration
+- read-only MCP server for vendor-neutral Codex / Claude Code integration
+- optional Ollama internal answer generation provider
 - Alembic migrations, backup/restore scripts, health checks, and benchmarks
 
 Current scope တွင် အောက်ပါတို့ကို မထည့်သေးပါ။
@@ -41,21 +47,20 @@ Company Documents
   -> Embedding Model
   -> Qdrant Vector Store
   -> PostgreSQL Metadata Store
-  -> Retriever
-  -> Ollama LLM
-  -> Answer with Sources
+  -> Retriever / Knowledge Explorer / MCP Search Tools
 ```
 
 ### Component Responsibilities
 
-- **FastAPI**: HTTP API entrypoint ဖြစ်ပြီး document ingestion နှင့် question-answer endpoints ကို expose လုပ်မည်။
+- **FastAPI**: HTTP API entrypoint ဖြစ်ပြီး ingestion, retrieval, ACL, metadata, source inspection endpoints ကို expose လုပ်မည်။
 - **Document Loader / Parser**: PDF နှင့် Markdown မှ text ထုတ်ယူမည်။
 - **Text Chunker**: ရှည်လျားသော document text ကို retrieval အတွက်သင့်တော်သော chunk များအဖြစ်ခွဲမည်။
 - **Embedding Model**: sentence-transformers ဖြင့် chunk တစ်ခုချင်းစီကို vector embedding အဖြစ်ပြောင်းမည်။
 - **Qdrant**: embeddings နှင့် metadata များကိုသိမ်းပြီး semantic search ပြန်ပေးမည်။
 - **PostgreSQL**: uploaded documents နှင့် generated chunks metadata များကိုသိမ်းမည်။
-- **Retriever**: user question အတွက်သက်ဆိုင်ရာ chunks များကို Qdrant မှရှာမည်။
-- **Ollama**: retrieved context ကိုအသုံးပြုပြီး final answer ထုတ်မည်။
+- **Retriever**: user query အတွက်သက်ဆိုင်ရာ chunks များကို vector, BM25, hybrid, reranker stack ဖြင့်ရှာမည်။
+- **MCP Server**: Codex, Claude Code, and other MCP clients အတွက် vendor-neutral read-only retrieval tools ကို expose လုပ်မည်။
+- **Ollama**: optional internal answer generation provider ဖြစ်ပြီး default runtime အတွက်မလိုအပ်ပါ။
 
 ## Folder Structure
 
@@ -77,7 +82,6 @@ company-document-rag/
       ingestion_service.py
       metadata_service.py
       retrieval_service.py
-      prompt_builder.py
       generation_service.py
       knowledge_tool_service.py
     mcp/
@@ -118,10 +122,9 @@ company-document-rag/
 - `app/services/ingestion_service.py`: uploaded document ကို save, parse, chunk, embed, vector store, metadata store flow အဖြစ် run မည့် service။
 - `app/services/metadata_service.py`: document နှင့် chunk metadata ကို PostgreSQL ထဲသိမ်းမည့် service။
 - `app/services/retrieval_service.py`: user query ကို embedding ပြောင်းပြီး Qdrant မှ relevant chunks များရှာမည့် retrieval service။
-- `app/services/prompt_builder.py`: user question နှင့် retrieved context ကို Ollama အတွက် prompt အဖြစ်တည်ဆောက်မည့် service။
-- `app/services/generation_service.py`: prompt ကို Ollama local API သို့ပို့ပြီး answer နှင့် sources ပြန်ထုတ်မည့် service။
+- `app/services/generation_service.py`: optional internal answer generation provider integration များထားမည့် service။
 - `app/services/knowledge_tool_service.py`: MCP read-only tools အတွက် existing services များကို orchestration လုပ်မည့် service။
-- `app/mcp/`: Hermes ကချိတ်မည့် MCP server process နှင့် service-account auth code များထားမည့်နေရာ။
+- `app/mcp/`: Codex က Streamable HTTP ဖြင့်ချိတ်မည့် MCP server process နှင့် service-account auth code များထားမည့်နေရာ။
 - `app/schemas/`: API request/response Pydantic models များထားမည့်နေရာ။
 - `app/schemas/documents.py`: extracted text, chunk text, embedded chunk, retrieval result, generated answer နှင့် metadata models များထားမည့်နေရာ။
 - `app/schemas/mcp.py`: MCP tool response schemas များထားမည့်နေရာ။
@@ -133,12 +136,15 @@ company-document-rag/
 - `scripts/store_vectors.py`: generated embeddings များကို Qdrant collection ထဲသို့ upsert လုပ်ရန် script။
 - `scripts/inspect_vector_store.py`: Qdrant collection status နှင့် stored payload samples ကို CLI မှကြည့်ရန် script။
 - `scripts/query_vectors.py`: user query ဖြင့် Qdrant similarity search စမ်းရန် script။
-- `scripts/answer_question.py`: retrieval results ကို Ollama သို့ပို့ပြီး simple RAG answer စမ်းရန် script။
+- `scripts/answer_question.py`: optional Ollama provider ဖြင့် simple generated answer စမ်းရန် script။
 - `tests/`: unit tests နှင့် API tests များထားမည့်နေရာ။
 
 ## Document Ingestion Pipeline
 
-အခုအဆင့်တွင် pipeline သည် loading, parsing, chunking, embedding generation, Qdrant vector storage, PostgreSQL metadata storage, retrieval နှင့် Ollama answer generation ကိုလုပ်သည်။ Agent logic နှင့် Memory မထည့်သေးပါ။
+အခုအဆင့်တွင် pipeline သည် loading, parsing, chunking, embedding generation,
+Qdrant vector storage, PostgreSQL metadata storage, retrieval, ACL filtering,
+and source inspection ကိုလုပ်သည်။ Agent logic နှင့် Memory ကို Knowledge Base
+ထဲတွင်မထည့်ထားပါ။
 
 ```text
 data/documents/
@@ -152,10 +158,8 @@ data/documents/
   -> store document and chunk metadata in PostgreSQL
   -> embed user query
   -> search similar vectors in Qdrant
-  -> build prompt from user question and retrieved context
-  -> call Ollama local API
-  -> return answer with sources
-  -> inspect extracted documents, chunks, embeddings, vector store, retrieval results, or answers with CLI
+  -> return retrieved sources through REST / Knowledge Explorer / MCP
+  -> inspect extracted documents, chunks, embeddings, vector store, or retrieval results with CLI
 ```
 
 ### Metadata
@@ -198,9 +202,11 @@ Retrieval result တစ်ခုချင်းစီတွင် အောက�
 - `score`: Qdrant similarity score
 - `metadata`: chunk metadata အပြည့်အစုံ
 
-Generated answer response တွင် အောက်ပါ fields များပါသည်။
+Optional generated answer response တွင် အောက်ပါ fields များပါသည်။ ဒီ endpoint
+သည် `INTERNAL_GENERATION_ENABLED=true` နှင့် provider dependency များရှိမှ
+အသုံးပြုနိုင်သည်။
 
-- `answer`: Ollama မှ generate လုပ်ထားသော answer
+- `answer`: configured internal generation provider မှ generate လုပ်ထားသော answer
 - `sources`: answer အတွက်သုံးခဲ့သော retrieved chunks source list
 - `sources[].filename`: source file name
 - `sources[].page_number`: PDF page number or `null`
@@ -208,24 +214,45 @@ Generated answer response တွင် အောက်ပါ fields များ
 
 ## Local Setup
 
-Docker Compose ဖြင့် API, Qdrant, Ollama ကိုတင်နိုင်သည်။ API dependencies များကို
-Docker image build အချိန်တွင် install လုပ်ထားပြီး container start တိုင်း
-`pip install` ပြန်မလုပ်တော့ပါ။
-
-API image ကို build လုပ်ရန်:
+Default Docker stack သည် PostgreSQL, Qdrant, API, MCP, and frontend ကိုတင်သည်။
+Ollama မလိုအပ်ပါ။ First run အတွက် local secrets, admin login, and MCP service
+token ကို `./start.sh` က generate/bootstrap လုပ်ပေးသည်။
 
 ```bash
 cd company-document-rag
-docker compose build api
+./start.sh
 ```
 
-Stack ကိုတင်ရန်:
+Manual Compose path ကိုသုံးချင်ရင် `.env` ကို `./start.sh` ဖြင့်တစ်ခါ
+bootstrap လုပ်ပြီးနောက် အောက်ပါ command ဖြင့် restart လုပ်နိုင်သည်။
 
 ```bash
-docker compose up
+docker compose up -d --build
 ```
 
-Ollama container တက်ပြီးနောက် model ကို pull လုပ်ရန်။
+Normal restart သည် persistent volumes ကိုမဖျက်ပါ။
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+Clean reset သည် explicit destructive command သီးသန့်ဖြစ်သည်။
+
+```bash
+./reset.sh --yes-delete-all-data
+```
+
+Optional internal answer generation လိုအပ်မှသာ Ollama profile ကိုသုံးပါ။
+Python client ကို install လုပ်ရန် image ကို `INSTALL_OLLAMA_CLIENT=true` ဖြင့်
+rebuild လုပ်ပြီး `INTERNAL_GENERATION_ENABLED=true` ထားရမည်။
+
+```bash
+INSTALL_OLLAMA_CLIENT=true INTERNAL_GENERATION_ENABLED=true \
+  docker compose --profile ollama up -d --build
+```
+
+Ollama container တက်ပြီးနောက် model ကို pull လုပ်ရန်:
 
 ```bash
 docker compose exec ollama ollama pull llama3.1:8b
@@ -234,14 +261,17 @@ docker compose exec ollama ollama pull llama3.1:8b
 API health check:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/health/ready
 ```
 
-Web chat UI ကို browser မှဖွင့်ရန်:
+Admin UI ကို browser မှဖွင့်ရန်:
 
 ```text
-http://localhost:8000
+http://localhost:5173
 ```
+
+Release deployment details, MCP setup, backup/restore, update procedure, and
+verification checklist ကို [docs/release.md](docs/release.md) တွင်ကြည့်ပါ။
 
 Document upload ingestion endpoint:
 
@@ -402,15 +432,17 @@ process ကို restart လုပ်ပါ။ Reranker သည် default disab
 Reranking သည် retrieval candidates များကို post-process လုပ်ပြီး permission,
 auth, user logic မပါဝင်ပါ။
 
-## Generate Answer
+## Optional Generate Answer
 
-Qdrant ထဲသို့ vectors သိမ်းပြီး Ollama model ရှိပြီးနောက် simple RAG answer ထုတ်ရန်:
+Qdrant ထဲသို့ vectors သိမ်းပြီး optional Ollama provider ကို install/configure
+လုပ်ထားပြီးမှ simple generated answer ထုတ်ရန်:
 
 ```bash
 python scripts/answer_question.py "How do employees request leave?"
 ```
 
-Top K, embedding model, Qdrant config, Ollama config ကို command line မှ override လုပ်နိုင်သည်။
+Top K, embedding model, Qdrant config, and optional Ollama config ကို command
+line မှ override လုပ်နိုင်သည်။
 
 ```bash
 python scripts/answer_question.py "What are the document security rules?" --top-k 3 --ollama-model llama3.1:8b
@@ -434,7 +466,7 @@ python scripts/answer_question.py "How do employees request leave?" \
 ## Evaluate RAG Quality
 
 Evaluation သည် production API မှသီးသန့်ဖြစ်သည်။ `/api/chat` ကိုမခေါ်ဘဲ
-existing `RetrievalService` နှင့် `RAGGenerationService` ကို reuse လုပ်သည်။
+existing `RetrievalService` နှင့် optional `RAGGenerationService` ကို reuse လုပ်သည်။
 Hybrid Search, Reranker, Code RAG မထည့်ခင် retrieval quality နှင့် answer
 quality baseline ကိုတိုင်းရန်သုံးနိုင်သည်။
 
@@ -567,9 +599,11 @@ python scripts/evaluate_rag.py \
 
 ## RAG Observability
 
-`/api/chat` requests create a best-effort trace record in PostgreSQL without
-changing answer behavior. Trace persistence failure is logged and does not break
-the chat response.
+When optional internal generation is enabled, `/api/chat` requests create a
+best-effort trace record in PostgreSQL without changing answer behavior. Trace
+persistence failure is logged and does not break the chat response. In the
+default retrieval-first stack, `/api/chat` returns
+`Internal answer generation is not configured.`
 
 Trace flow:
 
@@ -580,7 +614,7 @@ Trace flow:
   -> PermissionService ACL lookup
   -> RetrievalService timing
   -> optional RerankerService timing
-  -> GenerationService timing
+  -> optional GenerationService timing
   -> save rag_traces row
 ```
 
@@ -632,7 +666,7 @@ missing, the API generates one.
 ### Trace Analytics API
 
 Trace analytics endpoints are read-only and protected by the existing JWT
-authentication dependency. Roles and admin permissions are not included yet.
+authentication dependency. RBAC is not included yet.
 
 List traces:
 
@@ -800,8 +834,35 @@ Code chunks preserve document-compatible source fields and add code metadata:
 - `end_line`
 - `commit_sha`
 
-The `/api/chat` request and response contract is unchanged. Code sources are
-returned through the existing source list with `page_number=null`.
+When optional internal generation is enabled, code sources are returned through
+the existing `/api/chat` source list with `page_number=null`. In the default
+retrieval-first stack, use Knowledge Explorer or MCP retrieval tools for code
+source inspection.
+
+Repository management endpoints:
+
+```bash
+# list accessible repositories for current user
+curl -H "Authorization: Bearer <access_token>" \
+  http://localhost:8000/api/code/repositories
+
+# repository detail with files and chunks
+curl -H "Authorization: Bearer <access_token>" \
+  http://localhost:8000/api/code/repositories/1
+
+# reindex the stored repository clone at the same branch/commit
+curl -X POST http://localhost:8000/api/code/repositories/1/reindex \
+  -H "Authorization: Bearer <access_token>"
+
+# delete repository metadata, code files/chunks, Qdrant points, and stored clone
+curl -X DELETE http://localhost:8000/api/code/repositories/1 \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Repository list/detail responses expose `status`, `branch`, `commit_sha`,
+`file_count`, `chunk_count`, `created_at`, and `updated_at`. Reindex preserves
+the existing repository ACL row target and replaces files/chunks without
+leaving old Qdrant points referenced by PostgreSQL.
 
 Code RAG evaluation dataset example:
 
@@ -853,8 +914,9 @@ Docker Compose တွင် default values များကိုသတ်မှ�
 - `RERANKER_MODEL_NAME=cross-encoder/ms-marco-MiniLM-L-6-v2`
 - `RERANKER_CANDIDATE_SIZE=20`
 - `RERANKER_BATCH_SIZE=16`
-- `OLLAMA_BASE_URL=http://ollama:11434`
-- `OLLAMA_MODEL=llama3.1:8b`
+- `INTERNAL_GENERATION_ENABLED=false`
+- `OLLAMA_BASE_URL=http://ollama:11434` optional, used only when internal generation is enabled
+- `OLLAMA_MODEL=llama3.1:8b` optional, used only when internal generation is enabled
 - `EMBEDDING_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2`
 - `DOCUMENT_CHUNK_SIZE=1000`
 - `DOCUMENT_CHUNK_OVERLAP=150`
@@ -884,10 +946,15 @@ Production architecture:
 ```text
 Browser
   -> FastAPI
-  -> Auth / ACL / RAG Services
+  -> Auth / ACL / Retrieval Services
   -> PostgreSQL metadata
   -> Qdrant vector store
-  -> Ollama
+
+Codex / Claude Code
+  -> MCP streamable HTTP
+  -> Auth / ACL / Retrieval Services
+  -> PostgreSQL metadata
+  -> Qdrant vector store
 ```
 
 Operational hardening added:
@@ -897,7 +964,7 @@ Operational hardening added:
 - PostgreSQL backup/restore scripts
 - Qdrant snapshot workflow
 - stored file backup/restore scripts
-- dependency readiness endpoint for PostgreSQL, Qdrant, and Ollama
+- dependency readiness endpoint for PostgreSQL and Qdrant by default
 - Docker health checks and restart policies
 - request size limit, upload size validation, security headers, rate limiting
 - production JWT secret validation and code repository host allowlist
@@ -1008,17 +1075,18 @@ Future auth work:
 2. Add password reset.
 3. Add email verification.
 
-## Document Permission Notes
+## Permission Notes
 
-Document access control is user-document ACL v1 only. There are no roles,
-departments, tenants, or document ownership rules yet.
+Access control is user-document and user-repository ACL v1 only. There are no
+roles, departments, tenants, or document ownership rules yet.
 
 PostgreSQL is the source of truth for permissions. Qdrant remains vector storage
 only. At query time the API asks PostgreSQL for the current user's accessible
 Qdrant point IDs, then passes those IDs to retrieval as a generic
 `allowed_point_ids` filter.
 
-New uploads automatically grant document access to the uploader.
+New document uploads automatically grant document access to the uploader. New
+repository ingestion automatically grants repository access to the uploader.
 
 Grant/revoke document access:
 
@@ -1039,11 +1107,46 @@ curl -H "Authorization: Bearer <access_token>" \
   http://localhost:8000/api/documents
 ```
 
+Grant/revoke code repository access:
+
+```bash
+curl -X POST http://localhost:8000/api/admin/permissions/code-repositories/1/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{"user_id":2}'
+
+curl -X DELETE http://localhost:8000/api/admin/permissions/code-repositories/1/users/2 \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Admin permission lookup endpoints:
+
+- `GET /api/admin/permissions/users/{user_id}/documents`
+- `POST /api/admin/permissions/users/{user_id}/documents`
+- `DELETE /api/admin/permissions/users/{user_id}/documents/{document_id}`
+- `GET /api/admin/permissions/users/{user_id}/code-repositories`
+- `POST /api/admin/permissions/users/{user_id}/code-repositories`
+- `DELETE /api/admin/permissions/users/{user_id}/code-repositories/{repository_id}`
+- `GET /api/admin/permissions/documents/{document_id}/users`
+- `POST /api/admin/permissions/documents/{document_id}/users`
+- `DELETE /api/admin/permissions/documents/{document_id}/users/{user_id}`
+- `GET /api/admin/permissions/code-repositories/{repository_id}/users`
+- `POST /api/admin/permissions/code-repositories/{repository_id}/users`
+- `DELETE /api/admin/permissions/code-repositories/{repository_id}/users/{user_id}`
+
+List accessible code repositories for the current user:
+
+```bash
+curl -H "Authorization: Bearer <access_token>" \
+  http://localhost:8000/api/code/repositories
+```
+
 ### Permission Backfill
 
 Existing documents created before ACL support will not have
-`document_permissions` rows. Register or choose an initial admin user, then grant
-that user access to all existing documents:
+`document_permissions` rows. Existing repositories created before repository ACL
+support will not have `code_repository_permissions` rows. Register or choose an
+initial admin user, then grant that user access to existing resources:
 
 ```bash
 docker compose exec postgres psql -U rag -d company_rag -c "
@@ -1052,6 +1155,12 @@ SELECT d.id, u.id, NOW(), NOW()
 FROM documents d
 JOIN users u ON u.email = 'admin@example.com'
 ON CONFLICT (document_id, user_id) DO NOTHING;
+
+INSERT INTO code_repository_permissions (repository_id, user_id, created_at, updated_at)
+SELECT r.id, u.id, NOW(), NOW()
+FROM code_repositories r
+JOIN users u ON u.email = 'admin@example.com'
+ON CONFLICT (repository_id, user_id) DO NOTHING;
 "
 ```
 
@@ -1059,41 +1168,63 @@ To reset ACL rows in local development:
 
 ```bash
 docker compose exec postgres psql -U rag -d company_rag -c \
-  "TRUNCATE TABLE document_permissions RESTART IDENTITY;"
+  "TRUNCATE TABLE document_permissions, code_repository_permissions RESTART IDENTITY;"
 ```
 
 ## MCP Server
 
-The MCP layer lets Hermes use the Knowledge Base as read-only tools while the
-Knowledge Base stays a standalone backend/service. Agent logic remains outside
-this project.
+The MCP layer lets Codex, Claude Code, and other Streamable HTTP MCP clients use
+the Knowledge Base as read-only retrieval tools while the Knowledge Base stays a
+standalone backend/service. Agent logic remains outside this project.
 
 MCP architecture:
 
 ```text
-Hermes Agent
+Codex / Claude Code / MCP Client
   -> MCP streamable HTTP
   -> Company Knowledge Base MCP Server
   -> existing KB service layer
-  -> PermissionService / RetrievalService / RAGChatService
-  -> PostgreSQL / Qdrant / Ollama
+  -> PermissionService / RetrievalService
+  -> PostgreSQL / Qdrant
 ```
 
 MCP v1 tools:
 
 - `search_knowledge`: search accessible Document RAG and Code RAG chunks without
   final answer generation.
-- `ask_knowledge`: reuse the existing full RAG pipeline and return an answer
-  with sources.
+- `ask_knowledge`: backward-compatible optional internal generation tool. When
+  no generation provider is configured, it returns a clear unavailable response
+  and callers should use retrieval tools instead.
 - `get_document`: return accessible document metadata/details after ACL check.
 - `search_code`: search only accessible Code RAG chunks, with optional language
   filtering.
 
 MCP v1 authentication uses one model: a dedicated MCP service account mapped to
-an existing KB user. Hermes sends `Authorization: Bearer <mcp-service-token>`.
+an existing KB user. Codex sends `Authorization: Bearer <mcp-service-token>`.
 The MCP server stores only `MCP_SERVICE_TOKEN_SHA256`, resolves
 `MCP_SERVICE_ACCOUNT_EMAIL` to an existing active KB user, and reuses normal KB
 ACL rows for every retrieval/document operation.
+
+Codex Streamable HTTP config:
+
+```toml
+[mcp_servers.company_knowledge_base]
+url = "http://<knowledge-base-host>:8001/mcp"
+bearer_token_env_var = "COMPANY_KB_MCP_TOKEN"
+enabled = true
+required = true
+enabled_tools = [
+  "search_knowledge",
+  "get_document",
+  "search_code",
+]
+default_tools_approval_mode = "writes"
+startup_timeout_sec = 10
+tool_timeout_sec = 60
+```
+
+Claude Code can use the same Streamable HTTP endpoint and bearer token. No
+client-specific MCP behavior is required.
 
 Run the MCP service:
 
@@ -1101,12 +1232,12 @@ Run the MCP service:
 docker compose --profile mcp up -d --build mcp
 ```
 
-See [MCP Server](docs/mcp.md) for schemas, deployment, Hermes notes, and the
-test plan.
+See [MCP Server](docs/mcp.md) for schemas, deployment, Codex App and CLI
+configuration, and the test plan.
 
 ## Next Milestones
 
-1. Wire the MCP endpoint into the Hermes sandbox configuration.
+1. Run target-host Codex App/CLI smoke verification against the production MCP URL.
 2. Run production backup and recovery drills.
 3. Add document versioning as a dedicated schema migration.
 4. Move rate limiting to Redis before running multiple API replicas.

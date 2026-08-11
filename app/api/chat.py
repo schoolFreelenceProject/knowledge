@@ -12,7 +12,10 @@ from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.auth_service import AuthenticatedUser
 from app.services.chat_service import RAGChatService
 from app.services.embedding_service import EmbeddingServiceError
-from app.services.generation_service import GenerationServiceError
+from app.services.generation_service import (
+    GenerationServiceError,
+    InternalGenerationUnavailableError,
+)
 from app.services.permission_service import PermissionPersistenceError, PermissionService
 from app.services.rag_trace_service import RAGTraceService
 from app.services.retrieval_service import RetrievalServiceError
@@ -71,24 +74,48 @@ def chat(
         trace_context.finish_success()
         return chat_response
     except PermissionPersistenceError as exc:
-        detail = f"Permission lookup failed: {exc}"
-        trace_context.finish_error(detail)
+        detail = "Permission lookup failed."
+        trace_context.finish_error(str(exc))
+        logger.warning(
+            "chat_permission_lookup_failed request_id=%s",
+            request_id,
+            exc_info=True,
+        )
         raise _http_error(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=detail,
             request_id=request_id,
         ) from exc
     except (EmbeddingServiceError, RetrievalServiceError, VectorStoreError) as exc:
-        detail = f"Retrieval failed: {exc}"
-        trace_context.finish_error(detail)
+        detail = "Knowledge retrieval failed."
+        trace_context.finish_error(str(exc))
+        logger.warning(
+            "chat_retrieval_failed request_id=%s",
+            request_id,
+            exc_info=True,
+        )
         raise _http_error(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=detail,
             request_id=request_id,
         ) from exc
+    except InternalGenerationUnavailableError as exc:
+        detail = "Internal answer generation is not configured."
+        trace_context.finish_error(str(exc))
+        logger.info("chat_generation_unavailable request_id=%s", request_id)
+        raise _http_error(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail,
+            request_id=request_id,
+        ) from exc
     except GenerationServiceError as exc:
-        detail = f"LLM generation failed: {exc}"
-        trace_context.finish_error(detail)
+        detail = "Internal answer generation failed."
+        trace_context.finish_error(str(exc))
+        logger.warning(
+            "chat_generation_failed request_id=%s",
+            request_id,
+            exc_info=True,
+        )
         raise _http_error(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=detail,
@@ -140,7 +167,7 @@ def _build_trace_context(
     model_name = getattr(
         getattr(generation_service, "ollama_service", None),
         "model",
-        "unknown",
+        "none" if generation_service is None else "unknown",
     )
     return RAGTraceContext(
         request_id=request_id,

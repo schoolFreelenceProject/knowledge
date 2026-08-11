@@ -4,16 +4,23 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from app.db.models import Base, DocumentChunkRecord, DocumentRecord, DocumentStatus
+from app.db.models import (
+    Base,
+    DocumentChunkRecord,
+    DocumentPermissionRecord,
+    DocumentRecord,
+    DocumentStatus,
+    UserRecord,
+)
 from app.schemas.documents import EmbeddedChunk
-from app.services.ingestion_service import IngestionService
+from app.services.ingestion_service import FolderUploadItem, IngestionService
 from app.services.metadata_service import (
     DocumentMetadataService,
     MetadataPersistenceError,
 )
-from app.services.permission_service import PermissionPersistenceError
+from app.services.permission_service import PermissionPersistenceError, PermissionService
 from app.services.text_chunker import ChunkingConfig
-from app.services.vector_store import StoredVectorBatch
+from app.services.vector_store import StoredVectorBatch, build_point_id
 
 
 class FakeEmbeddingService:
@@ -48,9 +55,50 @@ class FakeVectorStore:
         self.deleted_point_ids.extend(point_ids)
 
 
+class TrackingVectorStore:
+    collection_name = "company_documents"
+
+    def __init__(self) -> None:
+        self.deleted_point_ids: list[str] = []
+        self.stored_point_ids: list[str] = []
+        self.active_point_ids: set[str] = set()
+
+    def store_embeddings(self, embedded_chunks):
+        embedded_chunk_list = list(embedded_chunks)
+        point_ids = [build_point_id(chunk) for chunk in embedded_chunk_list]
+        self.stored_point_ids.extend(point_ids)
+        self.active_point_ids.update(point_ids)
+        return StoredVectorBatch(
+            collection_name=self.collection_name,
+            stored_count=len(embedded_chunk_list),
+            vector_size=3,
+            point_ids=point_ids,
+        )
+
+    def delete_points(self, point_ids):
+        point_id_list = list(point_ids)
+        self.deleted_point_ids.extend(point_id_list)
+        self.active_point_ids.difference_update(point_id_list)
+
+
 class FailingMetadataService:
     def save_document_metadata(self, **_kwargs):
         raise MetadataPersistenceError("simulated PostgreSQL transaction failure")
+
+
+class FailingForPathMetadataService(DocumentMetadataService):
+    def __init__(self, *args, fail_source_path: str, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.fail_source_path = fail_source_path
+
+    def save_document_metadata(self, extracted_documents, **kwargs):
+        if extracted_documents[0].metadata.source_path == self.fail_source_path:
+            raise MetadataPersistenceError("simulated PostgreSQL transaction failure")
+
+        return super().save_document_metadata(
+            extracted_documents=extracted_documents,
+            **kwargs,
+        )
 
 
 class FakePermissionService:
@@ -73,6 +121,59 @@ def _build_sqlite_metadata_service():
         init_database=lambda: Base.metadata.create_all(bind=engine),
     )
     return metadata_service, session_factory
+
+
+def _build_folder_services(
+    tmp_path,
+    max_upload_bytes: int | None = None,
+    metadata_service: DocumentMetadataService | None = None,
+    vector_store: TrackingVectorStore | None = None,
+):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    resolved_metadata_service = metadata_service or DocumentMetadataService(
+        session_factory=session_factory,
+        init_database=lambda: Base.metadata.create_all(bind=engine),
+    )
+    permission_service = PermissionService(
+        session_factory=session_factory,
+        init_database=lambda: Base.metadata.create_all(bind=engine),
+    )
+    with session_factory() as session:
+        session.add(
+            UserRecord(
+                id=7,
+                email="uploader@example.com",
+                password_hash="$argon2id$hash",
+            )
+        )
+        session.add(
+            UserRecord(
+                id=8,
+                email="second@example.com",
+                password_hash="$argon2id$hash",
+            )
+        )
+        session.commit()
+
+    resolved_vector_store = vector_store or TrackingVectorStore()
+    ingestion_service = IngestionService(
+        documents_dir=tmp_path,
+        chunk_config=ChunkingConfig(chunk_size=200, chunk_overlap=20),
+        embedding_service=FakeEmbeddingService(),
+        vector_store=resolved_vector_store,
+        metadata_service=resolved_metadata_service,
+        permission_service=permission_service,
+        max_upload_bytes=max_upload_bytes,
+    )
+    return (
+        ingestion_service,
+        resolved_metadata_service,
+        permission_service,
+        resolved_vector_store,
+        session_factory,
+    )
 
 
 def test_ingestion_metadata_persistence(tmp_path) -> None:
@@ -174,3 +275,215 @@ def test_permission_failure_cleans_up_ingested_state(tmp_path) -> None:
 
     assert vector_store.deleted_point_ids == ["point-1"]
     assert not (tmp_path / "security.md").exists()
+
+
+def test_folder_ingestion_indexes_nested_documents_preserves_paths_and_acl(
+    tmp_path,
+) -> None:
+    (
+        ingestion_service,
+        _metadata_service,
+        _permission_service,
+        vector_store,
+        session_factory,
+    ) = _build_folder_services(tmp_path)
+
+    response = ingestion_service.ingest_folder_documents(
+        folder_name="CompanyDocs",
+        files=[
+            FolderUploadItem(
+                relative_path="HR/leave.md",
+                content=b"# Leave Policy\n\nEmployees can request paid leave.",
+            ),
+            FolderUploadItem(
+                relative_path="IT/security.md",
+                content=b"# Security Policy\n\nUse hardware keys for admin access.",
+            ),
+        ],
+        uploader_user_id=7,
+    )
+
+    with session_factory() as session:
+        documents = session.scalars(
+            select(DocumentRecord).order_by(DocumentRecord.storage_path)
+        ).all()
+        chunks = session.scalars(select(DocumentChunkRecord)).all()
+        permissions = session.scalars(
+            select(DocumentPermissionRecord).order_by(
+                DocumentPermissionRecord.document_id
+            )
+        ).all()
+
+    assert response.folder_name == "CompanyDocs"
+    assert response.files_discovered == 2
+    assert response.indexed == 2
+    assert response.skipped == 0
+    assert response.failed == 0
+    assert [document.filename for document in documents] == [
+        "HR/leave.md",
+        "IT/security.md",
+    ]
+    assert [document.storage_path for document in documents] == [
+        "HR/leave.md",
+        "IT/security.md",
+    ]
+    assert [(permission.document_id, permission.user_id) for permission in permissions] == [
+        (documents[0].id, 7),
+        (documents[1].id, 7),
+    ]
+    assert len(
+        {(chunk.document_id, chunk.chunk_index) for chunk in chunks}
+    ) == len(chunks)
+    assert vector_store.active_point_ids == {
+        chunk.qdrant_point_id for chunk in chunks
+    }
+    assert (tmp_path / "HR" / "leave.md").exists()
+    assert (tmp_path / "IT" / "security.md").exists()
+
+
+def test_folder_ingestion_skips_unsupported_hidden_binary_large_and_unsafe_paths(
+    tmp_path,
+) -> None:
+    ingestion_service, *_ = _build_folder_services(tmp_path, max_upload_bytes=20)
+
+    response = ingestion_service.ingest_folder_documents(
+        folder_name="/Users/uploader/CompanyDocs",
+        files=[
+            FolderUploadItem(relative_path=".DS_Store", content=b"metadata"),
+            FolderUploadItem(relative_path=".git/config", content=b"[core]\n"),
+            FolderUploadItem(
+                relative_path="node_modules/pkg/readme.md",
+                content=b"# Package",
+            ),
+            FolderUploadItem(relative_path="notes.txt", content=b"plain text"),
+            FolderUploadItem(relative_path="HR/binary.md", content=b"\x00\x01\x02"),
+            FolderUploadItem(relative_path="HR/big.md", content=b"#" * 21),
+            FolderUploadItem(relative_path="../secret.md", content=b"# Secret"),
+        ],
+        uploader_user_id=7,
+    )
+
+    assert response.folder_name == "CompanyDocs"
+    assert response.indexed == 0
+    assert response.skipped == 7
+    assert response.failed == 0
+    assert response.skip_reasons == {
+        "hidden_or_system_file": 1,
+        "excluded_directory": 2,
+        "unsupported_extension": 1,
+        "binary_file": 1,
+        "too_large": 1,
+        "unsafe_path": 1,
+    }
+
+
+def test_folder_ingestion_returns_duplicates_as_skipped_without_extra_vectors(
+    tmp_path,
+) -> None:
+    (
+        ingestion_service,
+        _metadata_service,
+        permission_service,
+        vector_store,
+        session_factory,
+    ) = _build_folder_services(tmp_path)
+    content = b"# Security Policy\n\nUse hardware keys for admin access."
+
+    first_response = ingestion_service.ingest_folder_documents(
+        folder_name="CompanyDocs",
+        files=[FolderUploadItem(relative_path="IT/security.md", content=content)],
+        uploader_user_id=7,
+    )
+    second_response = ingestion_service.ingest_folder_documents(
+        folder_name="CompanyDocs",
+        files=[
+            FolderUploadItem(relative_path="IT/security.md", content=content),
+            FolderUploadItem(relative_path="Copies/security.md", content=content),
+        ],
+        uploader_user_id=8,
+    )
+
+    with session_factory() as session:
+        documents = session.scalars(select(DocumentRecord)).all()
+        chunks = session.scalars(select(DocumentChunkRecord)).all()
+
+    assert first_response.indexed == 1
+    assert second_response.indexed == 0
+    assert second_response.skipped == 2
+    assert {result.reason for result in second_response.results} == {
+        "already_indexed"
+    }
+    assert len(documents) == 1
+    assert len(chunks) == 1
+    assert len(vector_store.stored_point_ids) == 1
+    assert vector_store.active_point_ids == set(vector_store.stored_point_ids)
+    assert permission_service.list_accessible_document_ids(8) == [
+        first_response.results[0].document_id
+    ]
+
+
+def test_folder_ingestion_continues_after_file_failure_and_cleans_partial_state(
+    tmp_path,
+) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    metadata_service = FailingForPathMetadataService(
+        session_factory=session_factory,
+        init_database=lambda: Base.metadata.create_all(bind=engine),
+        fail_source_path="HR/broken.md",
+    )
+    permission_service = PermissionService(
+        session_factory=session_factory,
+        init_database=lambda: Base.metadata.create_all(bind=engine),
+    )
+    with session_factory() as session:
+        session.add(
+            UserRecord(
+                id=7,
+                email="uploader@example.com",
+                password_hash="$argon2id$hash",
+            )
+        )
+        session.commit()
+    vector_store = TrackingVectorStore()
+    ingestion_service = IngestionService(
+        documents_dir=tmp_path,
+        chunk_config=ChunkingConfig(chunk_size=200, chunk_overlap=20),
+        embedding_service=FakeEmbeddingService(),
+        vector_store=vector_store,
+        metadata_service=metadata_service,
+        permission_service=permission_service,
+    )
+
+    response = ingestion_service.ingest_folder_documents(
+        folder_name="CompanyDocs",
+        files=[
+            FolderUploadItem(
+                relative_path="HR/broken.md",
+                content=b"# Broken\n\nThis fails after vectors are stored.",
+            ),
+            FolderUploadItem(
+                relative_path="IT/security.md",
+                content=b"# Security Policy\n\nUse hardware keys for admin access.",
+            ),
+        ],
+        uploader_user_id=7,
+    )
+
+    with session_factory() as session:
+        documents = session.scalars(select(DocumentRecord)).all()
+        chunks = session.scalars(select(DocumentChunkRecord)).all()
+        permissions = session.scalars(select(DocumentPermissionRecord)).all()
+
+    assert response.indexed == 1
+    assert response.failed == 1
+    assert [result.status for result in response.results] == ["failed", "indexed"]
+    assert response.results[0].reason == "metadata_error"
+    assert [document.storage_path for document in documents] == ["IT/security.md"]
+    assert len(permissions) == 1
+    assert not (tmp_path / "HR" / "broken.md").exists()
+    assert vector_store.deleted_point_ids
+    assert vector_store.active_point_ids == {
+        chunk.qdrant_point_id for chunk in chunks
+    }

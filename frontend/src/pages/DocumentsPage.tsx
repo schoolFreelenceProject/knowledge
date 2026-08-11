@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Search, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { FolderUp, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 
 import { getErrorMessage } from "../api/client";
 import {
@@ -12,22 +12,33 @@ import {
   reindexDocument,
   revokeDocumentPermission,
   uploadDocument,
+  uploadDocumentFolder,
 } from "../api/documents";
+import type { FolderUploadFile } from "../api/documents";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Panel, PanelHeader } from "../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/StatusState";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import type { DocumentSummary } from "../types/api";
+import type { DocumentSummary, FolderIngestResponse } from "../types/api";
 import { compactHash, formatDateTime, formatNumber } from "../utils/format";
+
+type FolderSelection = {
+  folderName: string;
+  files: FolderUploadFile[];
+};
 
 export function DocumentsPage() {
   const queryClient = useQueryClient();
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [permissionUserId, setPermissionUserId] = useState("");
+  const [folderSelection, setFolderSelection] = useState<FolderSelection | null>(null);
+  const [folderUploadProgress, setFolderUploadProgress] = useState(0);
+  const [folderResult, setFolderResult] = useState<FolderIngestResponse | null>(null);
   const [message, setMessage] = useState("");
   const debouncedSearch = useDebouncedValue(search);
 
@@ -54,6 +65,33 @@ export function DocumentsPage() {
       setMessage(`Uploaded ${response.filename}`);
       await queryClient.invalidateQueries({ queryKey: ["documents"] });
       setSelectedDocumentId(response.document_id);
+    },
+  });
+
+  const folderUploadMutation = useMutation({
+    mutationFn: (selection: FolderSelection) =>
+      uploadDocumentFolder(selection.folderName, selection.files, (event) => {
+        if (event.total) {
+          setFolderUploadProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      }),
+    onMutate: () => {
+      setFolderResult(null);
+      setFolderUploadProgress(0);
+    },
+    onSuccess: async (response) => {
+      setFolderResult(response);
+      setFolderUploadProgress(100);
+      setMessage(
+        `Folder ingestion complete: ${formatNumber(response.indexed)} indexed, ${formatNumber(
+          response.skipped,
+        )} skipped, ${formatNumber(response.failed)} failed`,
+      );
+      const firstSelectableResult = response.results.find((result) => result.document_id);
+      if (firstSelectableResult?.document_id) {
+        setSelectedDocumentId(firstSelectableResult.document_id);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["documents"] });
     },
   });
 
@@ -103,10 +141,21 @@ export function DocumentsPage() {
 
   const mutationError =
     uploadMutation.error ||
+    folderUploadMutation.error ||
     deleteMutation.error ||
     reindexMutation.error ||
     grantPermissionMutation.error ||
     revokePermissionMutation.error;
+
+  function handleFolderSelection(files: FileList | null) {
+    const selection = buildFolderSelection(files);
+    if (!selection) {
+      return;
+    }
+
+    setFolderSelection(selection);
+    folderUploadMutation.mutate(selection);
+  }
 
   return (
     <div className="space-y-6">
@@ -154,22 +203,78 @@ export function DocumentsPage() {
               </form>
             }
           />
-          <div className="border-b border-border p-4">
-            <label className="flex flex-wrap items-center gap-3 text-sm">
+          <div className="space-y-3 border-b border-border p-4">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <label className="flex flex-wrap items-center gap-3">
+                <input
+                  className="block text-sm"
+                  type="file"
+                  accept=".pdf,.md,.markdown"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      uploadMutation.mutate(file);
+                      event.target.value = "";
+                    }
+                  }}
+                />
+                {uploadMutation.isPending ? <Badge tone="info">Uploading</Badge> : null}
+              </label>
               <input
-                className="block text-sm"
-                type="file"
-                accept=".pdf,.md,.markdown"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) {
-                    uploadMutation.mutate(file);
-                    event.target.value = "";
+                ref={(node) => {
+                  folderInputRef.current = node;
+                  if (node) {
+                    node.setAttribute("webkitdirectory", "");
+                    node.setAttribute("directory", "");
                   }
                 }}
+                className="hidden"
+                type="file"
+                multiple
+                onChange={(event) => {
+                  handleFolderSelection(event.target.files);
+                  event.target.value = "";
+                }}
               />
-              {uploadMutation.isPending ? <Badge tone="info">Uploading</Badge> : null}
-            </label>
+              <Button
+                type="button"
+                variant="secondary"
+                icon={<FolderUp className="h-4 w-4" />}
+                isLoading={folderUploadMutation.isPending}
+                onClick={() => folderInputRef.current?.click()}
+              >
+                Upload Folder
+              </Button>
+            </div>
+
+            {folderSelection ? (
+              <div className="space-y-2 rounded-md border border-border bg-slate-50 px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium">Folder: {folderSelection.folderName}</span>
+                  <span className="text-muted">
+                    Files discovered: {formatNumber(folderSelection.files.length)}
+                  </span>
+                </div>
+                {folderUploadMutation.isPending ? (
+                  <div className="space-y-1">
+                    <div className="h-2 w-full overflow-hidden rounded-sm bg-white">
+                      <div
+                        className="h-full bg-accent transition-[width]"
+                        style={{ width: `${folderUploadProgress}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-muted">
+                      <span>
+                        {folderUploadProgress >= 100 ? "Ingesting files" : "Uploading"}
+                      </span>
+                      <span>{folderUploadProgress}%</span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {folderResult ? <FolderIngestSummary result={folderResult} /> : null}
           </div>
 
           {documentsQuery.isLoading ? <div className="p-4"><LoadingState /></div> : null}
@@ -361,6 +466,125 @@ function filterDocuments(
     const statusMatches = !status || document.status === status;
     return searchMatches && statusMatches;
   });
+}
+
+function FolderIngestSummary({ result }: { result: FolderIngestResponse }) {
+  const skippedOrFailed = result.results.filter((item) => item.status !== "indexed");
+
+  return (
+    <div className="space-y-3 rounded-md border border-border bg-white px-3 py-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-semibold">Folder: {result.folder_name}</span>
+        <span className="text-muted">
+          Files discovered: {formatNumber(result.files_discovered)}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <FolderSummaryCount label="Indexed" value={result.indexed} tone="success" />
+        <FolderSummaryCount label="Skipped" value={result.skipped} tone="warning" />
+        <FolderSummaryCount label="Failed" value={result.failed} tone="danger" />
+      </div>
+      {skippedOrFailed.length ? (
+        <details className="rounded-md border border-border">
+          <summary className="cursor-pointer px-3 py-2 font-medium">
+            Skipped and failed files
+          </summary>
+          <div className="max-h-56 overflow-auto border-t border-border">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Status</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {skippedOrFailed.map((item) => (
+                  <tr key={`${item.status}-${item.relative_path}`}>
+                    <td className="max-w-72 truncate font-medium">{item.relative_path}</td>
+                    <td>
+                      <FolderResultBadge status={item.status} />
+                    </td>
+                    <td>{formatFolderReason(item.reason, item.message)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function FolderSummaryCount({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "success" | "warning" | "danger";
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-border px-3 py-2">
+      <div className="form-label">{label}</div>
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <span className="text-base font-semibold">{formatNumber(value)}</span>
+        <Badge tone={tone}>{label}</Badge>
+      </div>
+    </div>
+  );
+}
+
+function FolderResultBadge({ status }: { status: "indexed" | "skipped" | "failed" }) {
+  const tone = status === "indexed" ? "success" : status === "failed" ? "danger" : "warning";
+  return <Badge tone={tone}>{status}</Badge>;
+}
+
+function formatFolderReason(reason: string | null, message: string | null): string {
+  if (message) {
+    return message;
+  }
+  if (!reason) {
+    return "-";
+  }
+
+  return reason.replaceAll("_", " ");
+}
+
+function buildFolderSelection(fileList: FileList | null): FolderSelection | null {
+  const files = Array.from(fileList ?? []);
+  if (!files.length) {
+    return null;
+  }
+
+  const firstParts = splitBrowserPath(getBrowserRelativePath(files[0]));
+  const folderName = firstParts.length > 1 ? firstParts[0] : "Selected folder";
+  return {
+    folderName,
+    files: files.map((file) => ({
+      file,
+      relativePath: folderRelativePath(file),
+    })),
+  };
+}
+
+function folderRelativePath(file: File): string {
+  const parts = splitBrowserPath(getBrowserRelativePath(file));
+  if (parts.length <= 1) {
+    return file.name;
+  }
+
+  return parts.slice(1).join("/") || file.name;
+}
+
+function getBrowserRelativePath(file: File): string {
+  return (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+}
+
+function splitBrowserPath(path: string): string[] {
+  return path.replaceAll("\\", "/").split("/").filter(Boolean);
 }
 
 function Detail({ label, value }: { label: string; value: string }) {

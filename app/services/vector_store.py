@@ -29,6 +29,9 @@ class VectorStoreStatus:
     distance: str | None
 
 
+VECTOR_UPSERT_BATCH_SIZE = 128
+
+
 @dataclass(frozen=True)
 class RetrievalDocument:
     point_id: str
@@ -84,13 +87,17 @@ class QdrantVectorStore:
             for chunk, point_id in zip(chunk_list, point_ids, strict=True)
         ]
 
+        stored_point_ids: list[str] = []
         try:
-            self.client.upsert(
-                collection_name=self.collection_name,
-                points=points,
-                wait=True,
-            )
+            for point_batch in _batched(points, VECTOR_UPSERT_BATCH_SIZE):
+                self.client.upsert(
+                    collection_name=self.collection_name,
+                    points=point_batch,
+                    wait=True,
+                )
+                stored_point_ids.extend(str(point.id) for point in point_batch)
         except Exception as exc:
+            self._delete_points_best_effort(stored_point_ids)
             raise VectorStoreError(
                 f"Failed to upsert vectors into Qdrant collection "
                 f"'{self.collection_name}': {exc}"
@@ -121,6 +128,12 @@ class QdrantVectorStore:
                 f"Failed to delete points from Qdrant collection "
                 f"'{self.collection_name}': {exc}"
             ) from exc
+
+    def _delete_points_best_effort(self, point_ids: Iterable[str]) -> None:
+        try:
+            self.delete_points(point_ids)
+        except VectorStoreError:
+            pass
 
     def ensure_collection(self, vector_size: int) -> None:
         if vector_size < 1:
@@ -338,6 +351,11 @@ def _validate_vectors(embedded_chunks: list[EmbeddedChunk]) -> int:
     return vector_size
 
 
+def _batched(items: list[Any], batch_size: int):
+    for start_index in range(0, len(items), batch_size):
+        yield items[start_index : start_index + batch_size]
+
+
 def _build_point(embedded_chunk: EmbeddedChunk, point_id: str):
     try:
         from qdrant_client import models
@@ -495,6 +513,7 @@ def _build_retrieval_result(scored_point: Any) -> RetrievalResult:
             repo_url=payload.get("repo_url"),
             branch=payload.get("branch"),
             commit_sha=payload.get("commit_sha"),
+            source_type=payload.get("source_type"),
             language=payload.get("language"),
             symbol_name=payload.get("symbol_name"),
             symbol_kind=payload.get("symbol_kind"),
@@ -509,6 +528,7 @@ def _build_retrieval_result(scored_point: Any) -> RetrievalResult:
         ) from exc
 
     return RetrievalResult(
+        point_id=str(scored_point.id),
         text=text,
         filename=metadata.filename,
         page_number=metadata.page_number,
@@ -536,6 +556,7 @@ def _build_retrieval_document(record: Any) -> RetrievalDocument:
             repo_url=payload.get("repo_url"),
             branch=payload.get("branch"),
             commit_sha=payload.get("commit_sha"),
+            source_type=payload.get("source_type"),
             language=payload.get("language"),
             symbol_name=payload.get("symbol_name"),
             symbol_kind=payload.get("symbol_kind"),

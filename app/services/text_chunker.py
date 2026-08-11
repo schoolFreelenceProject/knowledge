@@ -27,7 +27,16 @@ def chunk_documents(
     for document in documents:
         chunks.extend(chunk_document(document=document, config=config))
 
-    return chunks
+    return [
+        chunk.model_copy(
+            update={
+                "metadata": chunk.metadata.model_copy(
+                    update={"chunk_index": index}
+                )
+            }
+        )
+        for index, chunk in enumerate(chunks, start=1)
+    ]
 
 
 def chunk_document(

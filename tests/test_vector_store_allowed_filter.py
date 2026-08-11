@@ -1,12 +1,22 @@
 from types import SimpleNamespace
 
-from app.services.vector_store import QdrantVectorStore
+import pytest
+
+from app.schemas.documents import ChunkMetadata, EmbeddedChunk
+from app.services.vector_store import (
+    QdrantVectorStore,
+    VECTOR_UPSERT_BATCH_SIZE,
+    VectorStoreError,
+)
 
 
 class FakeQdrantClient:
     def __init__(self) -> None:
         self.query_filter = None
         self.collection_checked = False
+        self.upsert_batches = []
+        self.deleted_point_ids = []
+        self.fail_on_upsert_call = None
 
     def collection_exists(self, collection_name):
         self.collection_checked = True
@@ -36,6 +46,14 @@ class FakeQdrantClient:
     ):
         self.query_filter = query_filter
         return SimpleNamespace(points=[])
+
+    def upsert(self, collection_name, points, wait):
+        self.upsert_batches.append(points)
+        if self.fail_on_upsert_call == len(self.upsert_batches):
+            raise RuntimeError("simulated Qdrant request failure")
+
+    def delete(self, collection_name, points_selector, wait):
+        self.deleted_point_ids.extend(points_selector.points)
 
 
 def test_search_similar_applies_generic_allowed_point_filter() -> None:
@@ -120,3 +138,65 @@ def test_search_similar_can_filter_by_language() -> None:
     assert client.query_filter.must[1].match.value == "code"
     assert client.query_filter.must[2].key == "language"
     assert client.query_filter.must[2].match.value == "python"
+
+
+def test_store_embeddings_batches_qdrant_upserts() -> None:
+    client = FakeQdrantClient()
+    vector_store = QdrantVectorStore(
+        url="http://qdrant:6333",
+        collection_name="company_documents",
+        client=client,
+    )
+    chunks = _embedded_chunks(VECTOR_UPSERT_BATCH_SIZE + 1)
+
+    stored_batch = vector_store.store_embeddings(chunks)
+
+    assert stored_batch.stored_count == VECTOR_UPSERT_BATCH_SIZE + 1
+    assert len(client.upsert_batches) == 2
+    assert [len(batch) for batch in client.upsert_batches] == [
+        VECTOR_UPSERT_BATCH_SIZE,
+        1,
+    ]
+    assert client.deleted_point_ids == []
+
+
+def test_store_embeddings_cleans_successful_batches_when_later_upsert_fails() -> None:
+    client = FakeQdrantClient()
+    client.fail_on_upsert_call = 2
+    vector_store = QdrantVectorStore(
+        url="http://qdrant:6333",
+        collection_name="company_documents",
+        client=client,
+    )
+    chunks = _embedded_chunks(VECTOR_UPSERT_BATCH_SIZE + 1)
+
+    with pytest.raises(VectorStoreError):
+        vector_store.store_embeddings(chunks)
+
+    assert len(client.upsert_batches) == 2
+    assert len(client.deleted_point_ids) == VECTOR_UPSERT_BATCH_SIZE
+
+
+def _embedded_chunks(count: int) -> list[EmbeddedChunk]:
+    return [
+        EmbeddedChunk(
+            vector=[1.0, 0.0],
+            text=f"chunk {index}",
+            metadata=ChunkMetadata(
+                filename=f"file-{index}.php",
+                source_path=f"repo/file-{index}.php",
+                file_type="code",
+                content_type="code",
+                chunk_index=index,
+                start_char=0,
+                end_char=10,
+                repo_name="repo",
+                repo_url="file:///repo",
+                branch="main",
+                commit_sha="a" * 40,
+                language="php",
+                repository_file_path=f"file-{index}.php",
+            ),
+        )
+        for index in range(1, count + 1)
+    ]

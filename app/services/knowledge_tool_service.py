@@ -14,6 +14,10 @@ from app.schemas.mcp import (
 )
 from app.services.chat_service import RAGChatService
 from app.services.document_management_service import DocumentManagementService
+from app.services.generation_service import (
+    INTERNAL_GENERATION_UNAVAILABLE_MESSAGE,
+    InternalGenerationUnavailableError,
+)
 from app.services.permission_service import PermissionService
 from app.services.rag_trace_service import RAGTraceService
 from app.services.retrieval_service import RetrievalService
@@ -123,6 +127,22 @@ class KnowledgeToolService:
                 result_count=len(response.sources),
             )
             return response
+        except InternalGenerationUnavailableError as exc:
+            trace_context.finish_error(str(exc))
+            logger.info(
+                "mcp_tool_generation_unavailable tool=ask_knowledge "
+                "request_id=%s user_id=%s",
+                request_id,
+                user_id,
+            )
+            return MCPAskKnowledgeResponse(
+                request_id=request_id,
+                answer=(
+                    f"{INTERNAL_GENERATION_UNAVAILABLE_MESSAGE} "
+                    "Use search_knowledge or search_code for retrieved sources."
+                ),
+                sources=[],
+            )
         except Exception as exc:
             trace_context.finish_error(str(exc))
             logger.warning(
@@ -308,7 +328,7 @@ def _build_trace_context(
     model_name = getattr(
         getattr(generation_service, "ollama_service", None),
         "model",
-        "unknown",
+        "none" if generation_service is None else "unknown",
     )
     return RAGTraceContext(
         request_id=request_id,

@@ -24,6 +24,14 @@ class ClonedRepository:
     commit_sha: str
     path: Path
     storage_path: str
+    already_present: bool = False
+
+
+@dataclass(frozen=True)
+class CodeFileDiscovery:
+    paths: list[Path]
+    skipped_files: int
+    skip_reasons: dict[str, int]
 
 
 class GitRepositoryLoader:
@@ -62,10 +70,17 @@ class GitRepositoryLoader:
             )
             commit_sha = _run_git(["rev-parse", "HEAD"], cwd=temp_path).strip()
             final_path = self.repositories_dir / repo_name / normalized_branch / commit_sha
+            storage_path = final_path.relative_to(self.repositories_dir).as_posix()
             if final_path.exists():
-                raise CodeRepositoryAlreadyIndexedError(
-                    f"Repository revision already exists: "
-                    f"{repo_name}@{normalized_branch}:{commit_sha}"
+                shutil.rmtree(temp_path, ignore_errors=True)
+                return ClonedRepository(
+                    repo_url=normalized_repo_url,
+                    repo_name=repo_name,
+                    branch=normalized_branch,
+                    commit_sha=commit_sha,
+                    path=final_path,
+                    storage_path=storage_path,
+                    already_present=True,
                 )
 
             final_path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +91,7 @@ class GitRepositoryLoader:
                 branch=normalized_branch,
                 commit_sha=commit_sha,
                 path=final_path,
-                storage_path=final_path.relative_to(self.repositories_dir).as_posix(),
+                storage_path=storage_path,
             )
         except CodeRepositoryLoaderError:
             shutil.rmtree(temp_path, ignore_errors=True)
@@ -94,32 +109,56 @@ class GitRepositoryLoader:
         exclude_globs: list[str] | None = None,
         max_file_bytes: int = 1_000_000,
     ) -> list[Path]:
+        return self.discover_code_files_with_stats(
+            repository_path=repository_path,
+            include_globs=include_globs,
+            exclude_globs=exclude_globs,
+            max_file_bytes=max_file_bytes,
+        ).paths
+
+    def discover_code_files_with_stats(
+        self,
+        repository_path: Path,
+        include_globs: list[str] | None = None,
+        exclude_globs: list[str] | None = None,
+        max_file_bytes: int = 1_000_000,
+    ) -> CodeFileDiscovery:
         include_globs = include_globs or DEFAULT_CODE_INCLUDE_GLOBS
         exclude_globs = [*DEFAULT_CODE_EXCLUDE_GLOBS, *(exclude_globs or [])]
         include_spec = _build_pathspec(include_globs)
         exclude_spec = _build_pathspec([*exclude_globs, *_read_gitignore(repository_path)])
 
         discovered_files: list[Path] = []
+        skip_reasons: dict[str, int] = {}
         for path in sorted(repository_path.rglob("*")):
             if not path.is_file() or ".git" in path.parts:
                 continue
 
             relative_path = path.relative_to(repository_path).as_posix()
-            if not include_spec.match_file(relative_path):
-                continue
             if exclude_spec.match_file(relative_path):
+                _count_skip(skip_reasons, "excluded_path")
+                continue
+            if not include_spec.match_file(relative_path):
+                _count_skip(skip_reasons, "unsupported_extension")
                 continue
             if detect_language(path) is None:
+                _count_skip(skip_reasons, "unsupported_extension")
                 continue
             try:
                 if path.stat().st_size > max_file_bytes:
+                    _count_skip(skip_reasons, "too_large")
                     continue
             except OSError:
+                _count_skip(skip_reasons, "stat_error")
                 continue
 
             discovered_files.append(path)
 
-        return discovered_files
+        return CodeFileDiscovery(
+            paths=discovered_files,
+            skipped_files=sum(skip_reasons.values()),
+            skip_reasons=skip_reasons,
+        )
 
     def _validate_allowed_repository_host(self, repo_url: str) -> None:
         if "*" in self.allowed_hosts:
@@ -139,6 +178,9 @@ class CodeRepositoryAlreadyIndexedError(CodeRepositoryLoaderError):
 
 
 def cleanup_repository(repository: ClonedRepository) -> None:
+    if repository.already_present:
+        return
+
     shutil.rmtree(repository.path, ignore_errors=True)
 
 
@@ -175,6 +217,10 @@ def _safe_repo_name(repo_url: str) -> str:
         raise CodeRepositoryLoaderError("Repository name could not be resolved.")
 
     return safe_name[:120]
+
+
+def _count_skip(skip_reasons: dict[str, int], reason: str) -> None:
+    skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
 
 
 def _build_pathspec(patterns: list[str]):

@@ -15,18 +15,22 @@ class HealthService:
         self,
         database_engine_factory: Callable[[], Engine],
         qdrant_url: str,
-        ollama_base_url: str,
+        ollama_base_url: str | None = None,
+        internal_generation_enabled: bool = False,
     ) -> None:
         self.database_engine_factory = database_engine_factory
         self.qdrant_url = qdrant_url.rstrip("/")
-        self.ollama_base_url = ollama_base_url.rstrip("/")
+        self.ollama_base_url = (ollama_base_url or "").rstrip("/")
+        self.internal_generation_enabled = internal_generation_enabled
 
     def check_dependencies(self) -> HealthResponse:
         dependencies = [
             self._check_postgres(),
             self._check_qdrant(),
-            self._check_ollama(),
         ]
+        if self.internal_generation_enabled:
+            dependencies.append(self._check_ollama())
+
         status = (
             "ok"
             if all(dependency.status == "ok" for dependency in dependencies)

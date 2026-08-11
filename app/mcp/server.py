@@ -3,6 +3,7 @@ from typing import Any, Literal
 from mcp.server import MCPServer
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver.context import Context
+from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -18,6 +19,20 @@ from app.mcp.auth import (
 
 
 REQUEST_ID_HEADER = "X-Request-ID"
+READ_ONLY_TOOL_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    openWorldHint=False,
+)
+SERVER_INSTRUCTIONS = (
+    "Use these tools only for read-only Company Knowledge Base retrieval. "
+    "Tool calls run as the configured MCP service account and must respect "
+    "existing Knowledge Base ACL rows. Prefer search_knowledge for mixed "
+    "document/code retrieval, search_code for code-only retrieval, and "
+    "get_document for accessible document details. ask_knowledge is a "
+    "backward-compatible optional internal-generation tool and returns a "
+    "clear unavailable response when no generation provider is configured."
+)
 
 
 def create_mcp_server(settings: AppSettings | None = None) -> MCPServer:
@@ -26,8 +41,9 @@ def create_mcp_server(settings: AppSettings | None = None) -> MCPServer:
         name="company-knowledge-base",
         title="Company Knowledge Base",
         description=(
-            "Read-only MCP tools for searching and asking the Company Knowledge Base."
+            "Read-only MCP tools for retrieving Company Knowledge Base context."
         ),
+        instructions=SERVER_INSTRUCTIONS,
         version="0.1.0",
         token_verifier=MCPServiceAccountTokenVerifier(),
         auth=AuthSettings(
@@ -47,6 +63,7 @@ def create_mcp_server(settings: AppSettings | None = None) -> MCPServer:
             "Search accessible Document RAG and Code RAG knowledge without "
             "generating a final answer."
         ),
+        annotations=READ_ONLY_TOOL_ANNOTATIONS,
         structured_output=True,
     )
     def search_knowledge(
@@ -68,8 +85,11 @@ def create_mcp_server(settings: AppSettings | None = None) -> MCPServer:
 
     @server.tool(
         description=(
-            "Use the existing full RAG pipeline to answer a question with sources."
+            "Optional/deprecated internal-generation tool. Uses the existing "
+            "RAG pipeline when a generation provider is configured; otherwise "
+            "returns a clear unavailable response."
         ),
+        annotations=READ_ONLY_TOOL_ANNOTATIONS,
         structured_output=True,
     )
     def ask_knowledge(
@@ -89,6 +109,7 @@ def create_mcp_server(settings: AppSettings | None = None) -> MCPServer:
 
     @server.tool(
         description="Return metadata and details for an accessible document.",
+        annotations=READ_ONLY_TOOL_ANNOTATIONS,
         structured_output=True,
     )
     def get_document(
@@ -106,6 +127,7 @@ def create_mcp_server(settings: AppSettings | None = None) -> MCPServer:
 
     @server.tool(
         description="Search only accessible Code RAG chunks.",
+        annotations=READ_ONLY_TOOL_ANNOTATIONS,
         structured_output=True,
     )
     def search_code(
