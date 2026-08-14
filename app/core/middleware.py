@@ -10,11 +10,21 @@ from starlette.responses import JSONResponse, Response
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, max_body_bytes: int) -> None:
+    def __init__(
+        self,
+        app,
+        max_body_bytes: int,
+        path_max_body_bytes: dict[str, int] | None = None,
+    ) -> None:
         super().__init__(app)
         self.max_body_bytes = max_body_bytes
+        self.path_max_body_bytes = path_max_body_bytes or {}
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        max_body_bytes = self.path_max_body_bytes.get(
+            request.url.path,
+            self.max_body_bytes,
+        )
         content_length = request.headers.get("content-length")
         if content_length is not None:
             try:
@@ -22,13 +32,13 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
             except ValueError:
                 body_size = 0
 
-            if body_size > self.max_body_bytes:
+            if body_size > max_body_bytes:
                 return JSONResponse(
                     status_code=413,
                     content={
                         "detail": (
                             "Request body is too large. "
-                            f"Maximum allowed size is {self.max_body_bytes} bytes."
+                            f"Maximum allowed size is {max_body_bytes} bytes."
                         )
                     },
                 )

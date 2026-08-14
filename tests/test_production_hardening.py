@@ -111,6 +111,61 @@ def test_request_size_limit_middleware_rejects_large_body() -> None:
     response = TestClient(app).post("/upload", content=b"too-large")
 
     assert response.status_code == 413
+    assert response.json() == {
+        "detail": "Request body is too large. Maximum allowed size is 4 bytes."
+    }
+
+
+def test_request_size_limit_middleware_supports_bulk_route_limit() -> None:
+    app = FastAPI()
+    app.add_middleware(
+        RequestSizeLimitMiddleware,
+        max_body_bytes=4,
+        path_max_body_bytes={"/api/ingest/folder": 8},
+    )
+
+    @app.post("/api/ingest/folder")
+    def upload_folder():
+        return {"ok": True}
+
+    client = TestClient(app)
+    assert client.post("/api/ingest/folder", content=b"12345678").status_code == 200
+
+    response = client.post("/api/ingest/folder", content=b"123456789")
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "detail": "Request body is too large. Maximum allowed size is 8 bytes."
+    }
+
+
+def test_upload_limit_settings_support_bulk_and_legacy_alias(monkeypatch) -> None:
+    monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "10")
+    monkeypatch.delenv("MAX_UPLOAD_FILE_SIZE", raising=False)
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", "10")
+    monkeypatch.setenv("MAX_BULK_UPLOAD_SIZE", "20")
+    monkeypatch.setenv("MAX_BULK_FILE_COUNT", "3")
+    monkeypatch.setenv("PDF_MIN_TEXT_CHARS", "5")
+    monkeypatch.setenv("PDF_OCR_ENABLED", "true")
+    monkeypatch.setenv("PDF_OCR_LANGUAGES", "jpn+eng")
+    monkeypatch.setenv("PDF_OCR_DPI", "150")
+    monkeypatch.setenv("PDF_OCR_TIMEOUT_SECONDS", "9")
+    monkeypatch.setenv("PDF_OCR_MAX_PAGES", "4")
+    monkeypatch.setenv("PDF_TEXT_EXTRACTION_TIMEOUT_SECONDS", "7")
+
+    settings = get_settings()
+
+    assert settings.max_request_body_bytes == 10
+    assert settings.max_upload_file_size == 10
+    assert settings.max_bulk_upload_size == 20
+    assert settings.max_bulk_file_count == 3
+    assert settings.pdf_min_text_chars == 5
+    assert settings.pdf_ocr_enabled is True
+    assert settings.pdf_ocr_languages == "jpn+eng"
+    assert settings.pdf_ocr_dpi == 150
+    assert settings.pdf_ocr_timeout_seconds == 9
+    assert settings.pdf_ocr_max_pages == 4
+    assert settings.pdf_text_extraction_timeout_seconds == 7
 
 
 def test_security_headers_middleware_adds_headers() -> None:
@@ -208,6 +263,26 @@ def test_default_compose_does_not_require_ollama() -> None:
     assert "alembic upgrade head" in compose_text
     assert "frontend:" in compose_text
     assert "kb_data:/app/data" in compose_text
+    assert (
+        "MCP_SERVICE_ACCOUNT_EMAIL: ${MCP_SERVICE_ACCOUNT_EMAIL:-mcp-service@example.com}"
+        in compose_text
+    )
+    assert "MAX_UPLOAD_FILE_SIZE: ${MAX_UPLOAD_FILE_SIZE:-26214400}" in compose_text
+    assert "MAX_BULK_UPLOAD_SIZE: ${MAX_BULK_UPLOAD_SIZE:-268435456}" in compose_text
+    assert "MAX_BULK_FILE_COUNT: ${MAX_BULK_FILE_COUNT:-100}" in compose_text
+    assert "INSTALL_PDF_OCR: ${INSTALL_PDF_OCR:-true}" in compose_text
+    assert "PDF_OCR_ENABLED: ${PDF_OCR_ENABLED:-true}" in compose_text
+    assert "PDF_OCR_LANGUAGES: ${PDF_OCR_LANGUAGES:-jpn+eng}" in compose_text
+    assert "NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-256m}" in (
+        compose_text
+    )
+    assert "NGINX_PROXY_READ_TIMEOUT: ${NGINX_PROXY_READ_TIMEOUT:-1800s}" in (
+        compose_text
+    )
+    assert "NGINX_PROXY_SEND_TIMEOUT: ${NGINX_PROXY_SEND_TIMEOUT:-1800s}" in (
+        compose_text
+    )
+    assert "VITE_API_TIMEOUT_MS: ${VITE_API_TIMEOUT_MS:-1800000}" in compose_text
     assert "http://localhost:8000/health/ready" in compose_text
     assert "http://127.0.0.1/ >/dev/null" in compose_text
     assert "api:\n        condition: service_healthy" in compose_text
@@ -217,6 +292,21 @@ def test_backend_docker_image_uses_python_with_native_wheel_coverage() -> None:
     dockerfile_text = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
 
     assert dockerfile_text.startswith("FROM python:3.11-slim")
+    assert "poppler-utils" in dockerfile_text
+    assert "tesseract-ocr-jpn" in dockerfile_text
+
+
+def test_frontend_upload_timeouts_are_configurable() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    dockerfile_text = (project_root / "frontend" / "Dockerfile").read_text()
+    nginx_text = (project_root / "frontend" / "nginx.conf").read_text()
+    client_text = (project_root / "frontend" / "src" / "api" / "client.ts").read_text()
+
+    assert "ARG VITE_API_TIMEOUT_MS=1800000" in dockerfile_text
+    assert "NGINX_PROXY_READ_TIMEOUT=1800s" in dockerfile_text
+    assert "proxy_read_timeout ${NGINX_PROXY_READ_TIMEOUT};" in nginx_text
+    assert "proxy_send_timeout ${NGINX_PROXY_SEND_TIMEOUT};" in nginx_text
+    assert "DEFAULT_API_TIMEOUT_MS = 1_800_000" in client_text
 
 
 def test_release_bootstrap_scripts_are_explicit_and_non_destructive() -> None:
@@ -228,7 +318,16 @@ def test_release_bootstrap_scripts_are_explicit_and_non_destructive() -> None:
 
     assert "MCP_SERVICE_TOKEN_SHA256" in start_script
     assert "KB_BOOTSTRAP_ADMIN_PASSWORD" in start_script
-    assert "docker compose up -d --build" in start_script
+    assert "--env-file" in start_script
+    assert "postgres_storage_volume_exists" in start_script
+    assert "MAX_UPLOAD_FILE_SIZE" in start_script
+    assert "MAX_BULK_UPLOAD_SIZE" in start_script
+    assert "NGINX_CLIENT_MAX_BODY_SIZE" in start_script
+    assert "NGINX_PROXY_READ_TIMEOUT" in start_script
+    assert "VITE_API_TIMEOUT_MS" in start_script
+    assert "PDF_OCR_ENABLED" in start_script
+    assert "PDF_OCR_LANGUAGES" in start_script
+    assert "docker_compose up -d --build" in start_script
     assert "--yes-delete-all-data" in reset_script
     assert "docker compose down -v" in reset_script
     assert "git diff --check" in release_verify_script

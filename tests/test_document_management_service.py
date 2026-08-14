@@ -247,7 +247,7 @@ def test_reindex_assigns_unique_chunk_positions_across_extracted_blocks(
     service, session_factory = _build_services(tmp_path, vector_store=vector_store)
     document_id = _create_document(session_factory, tmp_path)
 
-    def fake_load_document(document_path, documents_dir):
+    def fake_load_document(document_path, documents_dir, pdf_config=None):
         return [
             ExtractedDocument(
                 text="First page policy text.",

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from app.api.auth_dependencies import get_current_user
 from app.api.dependencies import get_ingestion_service
+from app.core.config import get_settings
 from app.schemas.ingest import FolderIngestResponse, IngestResponse
 from app.services.auth_service import AuthenticatedUser
 from app.services.audit_log import audit_log
@@ -25,6 +26,7 @@ from app.services.vector_store import VectorStoreError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["ingestion"])
+UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
 
 @router.post(
@@ -37,8 +39,12 @@ async def ingest_document(
     current_user: AuthenticatedUser = Depends(get_current_user),
     ingestion_service: IngestionService = Depends(get_ingestion_service),
 ) -> IngestResponse:
+    settings = get_settings()
     try:
-        content = await file.read()
+        content = await _read_upload_content_with_limit(
+            file,
+            max_file_bytes=settings.max_upload_file_size,
+        )
         response = ingestion_service.ingest_uploaded_document(
             filename=file.filename or "",
             content=content,
@@ -108,6 +114,7 @@ async def ingest_document_folder(
     current_user: AuthenticatedUser = Depends(get_current_user),
     ingestion_service: IngestionService = Depends(get_ingestion_service),
 ) -> FolderIngestResponse:
+    settings = get_settings()
     try:
         if len(files) != len(relative_paths):
             raise HTTPException(
@@ -115,13 +122,36 @@ async def ingest_document_folder(
                 detail="Folder upload files and relative paths do not match.",
             )
 
-        folder_files = [
-            FolderUploadItem(
-                relative_path=relative_path,
-                content=await upload.read(),
+        if len(files) > settings.max_bulk_file_count:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=(
+                    "Folder upload has too many files. "
+                    f"Maximum allowed file count is {settings.max_bulk_file_count}."
+                ),
             )
-            for upload, relative_path in zip(files, relative_paths, strict=True)
-        ]
+
+        total_file_bytes = 0
+        folder_files: list[FolderUploadItem] = []
+        for upload, relative_path in zip(files, relative_paths, strict=True):
+            content = await _read_upload_content_with_limit(
+                upload,
+                max_file_bytes=settings.max_upload_file_size,
+            )
+            total_file_bytes += len(content)
+            if total_file_bytes > settings.max_bulk_upload_size:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail=(
+                        "Folder upload is too large. "
+                        "Maximum allowed total size is "
+                        f"{settings.max_bulk_upload_size} bytes."
+                    ),
+                )
+            folder_files.append(
+                FolderUploadItem(relative_path=relative_path, content=content)
+            )
+
         response = ingestion_service.ingest_folder_documents(
             folder_name=folder_name,
             files=folder_files,
@@ -160,6 +190,29 @@ async def ingest_document_folder(
     finally:
         for upload in files:
             await upload.close()
+
+
+async def _read_upload_content_with_limit(
+    upload: UploadFile,
+    max_file_bytes: int,
+) -> bytes:
+    content = bytearray()
+    while True:
+        chunk = await upload.read(UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+
+        content.extend(chunk)
+        if len(content) > max_file_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=(
+                    "Uploaded file is too large. "
+                    f"Maximum allowed file size is {max_file_bytes} bytes."
+                ),
+            )
+
+    return bytes(content)
 
 
 def _raise_logged_http_exception(

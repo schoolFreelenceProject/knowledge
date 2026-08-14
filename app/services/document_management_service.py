@@ -8,7 +8,7 @@ from app.schemas.document_management import (
     DocumentSummary,
     ReindexDocumentResponse,
 )
-from app.services.document_loader import load_document
+from app.services.document_loader import PdfExtractionConfig, load_document
 from app.services.embedding_service import SentenceTransformersEmbeddingService
 from app.services.metadata_service import (
     DocumentMetadataService,
@@ -39,12 +39,14 @@ class DocumentManagementService:
         embedding_service: SentenceTransformersEmbeddingService,
         vector_store: QdrantVectorStore,
         metadata_service: DocumentMetadataService,
+        pdf_extraction_config: PdfExtractionConfig | None = None,
     ) -> None:
         self.documents_dir = Path(documents_dir)
         self.chunk_config = chunk_config
         self.embedding_service = embedding_service
         self.vector_store = vector_store
         self.metadata_service = metadata_service
+        self.pdf_extraction_config = pdf_extraction_config
 
     def list_documents(
         self,
@@ -96,6 +98,7 @@ class DocumentManagementService:
             extracted_documents = load_document(
                 document_path=document_path,
                 documents_dir=self.documents_dir,
+                pdf_config=self.pdf_extraction_config,
             )
             chunks = chunk_documents(
                 documents=extracted_documents,

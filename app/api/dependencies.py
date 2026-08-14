@@ -14,6 +14,7 @@ from app.services.code_repository_management_service import (
 )
 from app.services.code_repository_loader import GitRepositoryLoader
 from app.services.document_management_service import DocumentManagementService
+from app.services.document_loader import PdfExtractionConfig
 from app.services.embedding_service import SentenceTransformersEmbeddingService
 from app.services.generation_service import (
     OllamaGenerationService,
@@ -164,7 +165,8 @@ def get_ingestion_service() -> IngestionService:
         vector_store=vector_store,
         metadata_service=metadata_service,
         permission_service=permission_service,
-        max_upload_bytes=settings.max_upload_bytes,
+        max_upload_bytes=settings.max_upload_file_size,
+        pdf_extraction_config=_build_pdf_extraction_config(settings),
     )
 
 
@@ -254,6 +256,7 @@ def get_document_management_service() -> DocumentManagementService:
         embedding_service=embedding_service,
         vector_store=vector_store,
         metadata_service=metadata_service,
+        pdf_extraction_config=_build_pdf_extraction_config(settings),
     )
 
 
@@ -295,4 +298,18 @@ def get_health_service() -> HealthService:
         qdrant_url=settings.qdrant_url,
         ollama_base_url=settings.ollama_base_url,
         internal_generation_enabled=settings.internal_generation_enabled,
+    )
+
+
+def _build_pdf_extraction_config(settings) -> PdfExtractionConfig:
+    return PdfExtractionConfig(
+        min_text_chars=settings.pdf_min_text_chars,
+        ocr_enabled=settings.pdf_ocr_enabled,
+        ocr_languages=settings.pdf_ocr_languages,
+        ocr_dpi=settings.pdf_ocr_dpi,
+        ocr_timeout_seconds=settings.pdf_ocr_timeout_seconds,
+        ocr_max_pages=settings.pdf_ocr_max_pages,
+        text_extraction_timeout_seconds=(
+            settings.pdf_text_extraction_timeout_seconds
+        ),
     )

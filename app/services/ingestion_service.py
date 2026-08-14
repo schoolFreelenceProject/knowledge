@@ -13,7 +13,12 @@ from app.schemas.ingest import (
 from app.services.document_loader import (
     MARKDOWN_EXTENSIONS,
     SUPPORTED_EXTENSIONS,
+    CorruptPdfError,
     DocumentLoaderError,
+    EncryptedPdfError,
+    PdfExtractionConfig,
+    PdfExtractionError,
+    ScannedPdfRequiresOcrError,
     load_document,
 )
 from app.services.embedding_service import (
@@ -98,6 +103,7 @@ class IngestionService:
         metadata_service: DocumentMetadataService,
         permission_service: PermissionService | None = None,
         max_upload_bytes: int | None = None,
+        pdf_extraction_config: PdfExtractionConfig | None = None,
     ) -> None:
         self.documents_dir = Path(documents_dir)
         self.chunk_config = chunk_config
@@ -106,6 +112,7 @@ class IngestionService:
         self.metadata_service = metadata_service
         self.permission_service = permission_service
         self.max_upload_bytes = max_upload_bytes
+        self.pdf_extraction_config = pdf_extraction_config
 
     def ingest_uploaded_document(
         self,
@@ -175,6 +182,7 @@ class IngestionService:
             extracted_documents = load_document(
                 document_path=document_path,
                 documents_dir=self.documents_dir,
+                pdf_config=self.pdf_extraction_config,
             )
             if not extracted_documents:
                 raise IngestionServiceError(
@@ -353,7 +361,51 @@ class IngestionService:
                 reason="storage_error",
                 message="Document could not be saved.",
             )
-        except (IngestionServiceError, DocumentLoaderError, ValueError):
+        except ScannedPdfRequiresOcrError:
+            logger.exception(
+                "Folder document requires OCR",
+                extra={"relative_path": safe_relative_path},
+            )
+            return FolderIngestFileResult(
+                relative_path=safe_relative_path,
+                status="failed",
+                reason="scanned_pdf_requires_ocr",
+                message="PDF appears to be scanned and requires OCR.",
+            )
+        except EncryptedPdfError:
+            logger.exception(
+                "Folder document is encrypted",
+                extra={"relative_path": safe_relative_path},
+            )
+            return FolderIngestFileResult(
+                relative_path=safe_relative_path,
+                status="failed",
+                reason="encrypted_pdf",
+                message="PDF is encrypted and cannot be processed.",
+            )
+        except CorruptPdfError:
+            logger.exception(
+                "Folder document is unsupported or corrupt",
+                extra={"relative_path": safe_relative_path},
+            )
+            return FolderIngestFileResult(
+                relative_path=safe_relative_path,
+                status="failed",
+                reason="unsupported_or_corrupt_pdf",
+                message="PDF is unsupported or corrupt.",
+            )
+        except (PdfExtractionError, DocumentLoaderError, ValueError):
+            logger.exception(
+                "Folder document could not be processed",
+                extra={"relative_path": safe_relative_path},
+            )
+            return FolderIngestFileResult(
+                relative_path=safe_relative_path,
+                status="failed",
+                reason="extraction_failed",
+                message="Document text could not be extracted.",
+            )
+        except IngestionServiceError:
             logger.exception(
                 "Folder document could not be processed",
                 extra={"relative_path": safe_relative_path},

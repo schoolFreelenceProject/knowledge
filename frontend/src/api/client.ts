@@ -2,9 +2,16 @@ import axios, { AxiosError } from "axios";
 
 import { dispatchSessionExpired, getStoredSession } from "./tokenStore";
 
+const DEFAULT_API_TIMEOUT_MS = 1_800_000;
+const configuredApiTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS);
+const apiTimeoutMs =
+  Number.isFinite(configuredApiTimeoutMs) && configuredApiTimeoutMs > 0
+    ? configuredApiTimeoutMs
+    : DEFAULT_API_TIMEOUT_MS;
+
 export const apiClient = axios.create({
   baseURL: "",
-  timeout: 120_000,
+  timeout: apiTimeoutMs,
 });
 
 apiClient.interceptors.request.use((config) => {

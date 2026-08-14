@@ -44,6 +44,10 @@ app = FastAPI(
 app.add_middleware(
     RequestSizeLimitMiddleware,
     max_body_bytes=settings.max_request_body_bytes,
+    path_max_body_bytes={
+        "/api/ingest/folder": settings.max_bulk_upload_size,
+        "/api/code/ingest/folder": settings.max_bulk_upload_size,
+    },
 )
 if settings.rate_limit_enabled:
     app.add_middleware(

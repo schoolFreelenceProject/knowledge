@@ -31,7 +31,17 @@ DEFAULT_RERANKER_CANDIDATE_SIZE = 20
 DEFAULT_RERANKER_BATCH_SIZE = 16
 DEFAULT_DATABASE_AUTO_CREATE = True
 DEFAULT_MAX_REQUEST_BODY_BYTES = 25 * 1024 * 1024
-DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+DEFAULT_MAX_UPLOAD_FILE_SIZE = 25 * 1024 * 1024
+DEFAULT_MAX_BULK_UPLOAD_SIZE = 256 * 1024 * 1024
+DEFAULT_MAX_BULK_FILE_COUNT = 100
+DEFAULT_MAX_UPLOAD_BYTES = DEFAULT_MAX_UPLOAD_FILE_SIZE
+DEFAULT_PDF_MIN_TEXT_CHARS = 20
+DEFAULT_PDF_OCR_ENABLED = True
+DEFAULT_PDF_OCR_LANGUAGES = "jpn+eng"
+DEFAULT_PDF_OCR_DPI = 200
+DEFAULT_PDF_OCR_TIMEOUT_SECONDS = 120
+DEFAULT_PDF_OCR_MAX_PAGES = 100
+DEFAULT_PDF_TEXT_EXTRACTION_TIMEOUT_SECONDS = 30
 DEFAULT_SECURITY_HEADERS_ENABLED = True
 DEFAULT_RATE_LIMIT_ENABLED = True
 DEFAULT_RATE_LIMIT_REQUESTS = 120
@@ -75,7 +85,18 @@ class AppSettings:
     reranker_batch_size: int = DEFAULT_RERANKER_BATCH_SIZE
     database_auto_create: bool = DEFAULT_DATABASE_AUTO_CREATE
     max_request_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES
-    max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
+    max_upload_file_size: int = DEFAULT_MAX_UPLOAD_FILE_SIZE
+    max_bulk_upload_size: int = DEFAULT_MAX_BULK_UPLOAD_SIZE
+    max_bulk_file_count: int = DEFAULT_MAX_BULK_FILE_COUNT
+    pdf_min_text_chars: int = DEFAULT_PDF_MIN_TEXT_CHARS
+    pdf_ocr_enabled: bool = DEFAULT_PDF_OCR_ENABLED
+    pdf_ocr_languages: str = DEFAULT_PDF_OCR_LANGUAGES
+    pdf_ocr_dpi: int = DEFAULT_PDF_OCR_DPI
+    pdf_ocr_timeout_seconds: int = DEFAULT_PDF_OCR_TIMEOUT_SECONDS
+    pdf_ocr_max_pages: int = DEFAULT_PDF_OCR_MAX_PAGES
+    pdf_text_extraction_timeout_seconds: int = (
+        DEFAULT_PDF_TEXT_EXTRACTION_TIMEOUT_SECONDS
+    )
     security_headers_enabled: bool = DEFAULT_SECURITY_HEADERS_ENABLED
     rate_limit_enabled: bool = DEFAULT_RATE_LIMIT_ENABLED
     rate_limit_requests: int = DEFAULT_RATE_LIMIT_REQUESTS
@@ -195,9 +216,46 @@ def get_settings() -> AppSettings:
             name="MAX_REQUEST_BODY_BYTES",
             default=DEFAULT_MAX_REQUEST_BODY_BYTES,
         ),
-        max_upload_bytes=_read_int(
-            name="MAX_UPLOAD_BYTES",
-            default=DEFAULT_MAX_UPLOAD_BYTES,
+        max_upload_file_size=_read_int_with_fallback(
+            name="MAX_UPLOAD_FILE_SIZE",
+            fallback_name="MAX_UPLOAD_BYTES",
+            default=DEFAULT_MAX_UPLOAD_FILE_SIZE,
+        ),
+        max_bulk_upload_size=_read_int(
+            name="MAX_BULK_UPLOAD_SIZE",
+            default=DEFAULT_MAX_BULK_UPLOAD_SIZE,
+        ),
+        max_bulk_file_count=_read_int(
+            name="MAX_BULK_FILE_COUNT",
+            default=DEFAULT_MAX_BULK_FILE_COUNT,
+        ),
+        pdf_min_text_chars=_read_int(
+            name="PDF_MIN_TEXT_CHARS",
+            default=DEFAULT_PDF_MIN_TEXT_CHARS,
+        ),
+        pdf_ocr_enabled=_read_bool(
+            name="PDF_OCR_ENABLED",
+            default=DEFAULT_PDF_OCR_ENABLED,
+        ),
+        pdf_ocr_languages=_read_str(
+            name="PDF_OCR_LANGUAGES",
+            default=DEFAULT_PDF_OCR_LANGUAGES,
+        ),
+        pdf_ocr_dpi=_read_int(
+            name="PDF_OCR_DPI",
+            default=DEFAULT_PDF_OCR_DPI,
+        ),
+        pdf_ocr_timeout_seconds=_read_int(
+            name="PDF_OCR_TIMEOUT_SECONDS",
+            default=DEFAULT_PDF_OCR_TIMEOUT_SECONDS,
+        ),
+        pdf_ocr_max_pages=_read_int(
+            name="PDF_OCR_MAX_PAGES",
+            default=DEFAULT_PDF_OCR_MAX_PAGES,
+        ),
+        pdf_text_extraction_timeout_seconds=_read_int(
+            name="PDF_TEXT_EXTRACTION_TIMEOUT_SECONDS",
+            default=DEFAULT_PDF_TEXT_EXTRACTION_TIMEOUT_SECONDS,
         ),
         security_headers_enabled=_read_bool(
             name="SECURITY_HEADERS_ENABLED",
@@ -274,6 +332,13 @@ def _read_int(name: str, default: int) -> int:
         return int(raw_value)
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer.") from exc
+
+
+def _read_int_with_fallback(name: str, fallback_name: str, default: int) -> int:
+    if os.getenv(name) is not None:
+        return _read_int(name=name, default=default)
+
+    return _read_int(name=fallback_name, default=default)
 
 
 def _read_str(name: str, default: str) -> str:
@@ -445,13 +510,45 @@ def _validate_security_settings(settings: AppSettings) -> None:
     if settings.max_request_body_bytes < 1:
         raise ValueError("MAX_REQUEST_BODY_BYTES must be greater than 0.")
 
-    if settings.max_upload_bytes < 1:
-        raise ValueError("MAX_UPLOAD_BYTES must be greater than 0.")
+    if settings.max_upload_file_size < 1:
+        raise ValueError("MAX_UPLOAD_FILE_SIZE must be greater than 0.")
 
-    if settings.max_upload_bytes > settings.max_request_body_bytes:
+    if settings.max_bulk_upload_size < 1:
+        raise ValueError("MAX_BULK_UPLOAD_SIZE must be greater than 0.")
+
+    if settings.max_bulk_file_count < 1:
+        raise ValueError("MAX_BULK_FILE_COUNT must be greater than 0.")
+
+    if settings.max_upload_file_size > settings.max_request_body_bytes:
         raise ValueError(
-            "MAX_UPLOAD_BYTES must be less than or equal to "
+            "MAX_UPLOAD_FILE_SIZE must be less than or equal to "
             "MAX_REQUEST_BODY_BYTES."
+        )
+
+    if settings.max_upload_file_size > settings.max_bulk_upload_size:
+        raise ValueError(
+            "MAX_UPLOAD_FILE_SIZE must be less than or equal to "
+            "MAX_BULK_UPLOAD_SIZE."
+        )
+
+    if settings.pdf_min_text_chars < 1:
+        raise ValueError("PDF_MIN_TEXT_CHARS must be greater than 0.")
+
+    if not settings.pdf_ocr_languages:
+        raise ValueError("PDF_OCR_LANGUAGES cannot be empty.")
+
+    if settings.pdf_ocr_dpi < 72:
+        raise ValueError("PDF_OCR_DPI must be at least 72.")
+
+    if settings.pdf_ocr_timeout_seconds < 1:
+        raise ValueError("PDF_OCR_TIMEOUT_SECONDS must be greater than 0.")
+
+    if settings.pdf_ocr_max_pages < 1:
+        raise ValueError("PDF_OCR_MAX_PAGES must be greater than 0.")
+
+    if settings.pdf_text_extraction_timeout_seconds < 1:
+        raise ValueError(
+            "PDF_TEXT_EXTRACTION_TIMEOUT_SECONDS must be greater than 0."
         )
 
     if settings.rate_limit_requests < 1:

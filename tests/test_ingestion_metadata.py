@@ -487,3 +487,30 @@ def test_folder_ingestion_continues_after_file_failure_and_cleans_partial_state(
     assert vector_store.active_point_ids == {
         chunk.qdrant_point_id for chunk in chunks
     }
+
+
+def test_folder_ingestion_reports_corrupt_pdf_without_blocking_good_files(
+    tmp_path,
+) -> None:
+    ingestion_service, *_ = _build_folder_services(tmp_path)
+
+    response = ingestion_service.ingest_folder_documents(
+        folder_name="MixedDocs",
+        files=[
+            FolderUploadItem(
+                relative_path="good.md",
+                content=b"# Good\n\nThis markdown document is indexed.",
+            ),
+            FolderUploadItem(
+                relative_path="broken.pdf",
+                content=b"this is not a pdf",
+            ),
+        ],
+        uploader_user_id=7,
+    )
+
+    assert response.indexed == 1
+    assert response.failed == 1
+    assert response.results[0].status == "indexed"
+    assert response.results[1].status == "failed"
+    assert response.results[1].reason == "unsupported_or_corrupt_pdf"

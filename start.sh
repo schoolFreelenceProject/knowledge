@@ -6,6 +6,30 @@ cd "${ROOT_DIR}"
 
 ENV_FILE="${KB_ENV_FILE:-.env}"
 GENERATED_ENV="false"
+DEFAULT_POSTGRES_PASSWORD="rag_password"
+
+COMPOSE_ENV_ARGS=(--env-file "${ENV_FILE}")
+
+docker_compose() {
+  docker compose "${COMPOSE_ENV_ARGS[@]}" "$@"
+}
+
+compose_project_name() {
+  if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
+    printf '%s' "${COMPOSE_PROJECT_NAME}"
+    return
+  fi
+
+  basename "${ROOT_DIR}" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9_-]+//g'
+}
+
+postgres_storage_volume_exists() {
+  local volume_name
+  volume_name="$(compose_project_name)_postgres_storage"
+  docker volume inspect "${volume_name}" >/dev/null 2>&1
+}
 
 random_alnum() {
   local length="${1:-48}"
@@ -110,7 +134,13 @@ ensure_env_value "QDRANT_HTTP_PORT" "6333"
 ensure_env_value "QDRANT_GRPC_PORT" "6334"
 ensure_env_value "POSTGRES_DB" "company_rag"
 ensure_env_value "POSTGRES_USER" "rag"
-ensure_env_value "POSTGRES_PASSWORD" "$(random_hex 24)"
+if [[ -z "$(get_env_value POSTGRES_PASSWORD)" ]]; then
+  if postgres_storage_volume_exists; then
+    set_env_value "POSTGRES_PASSWORD" "${DEFAULT_POSTGRES_PASSWORD}"
+  else
+    set_env_value "POSTGRES_PASSWORD" "$(random_hex 24)"
+  fi
+fi
 ensure_env_value "DATABASE_AUTO_CREATE" "false"
 
 POSTGRES_DB="$(get_env_value POSTGRES_DB)"
@@ -131,6 +161,7 @@ ensure_env_value "INTERNAL_GENERATION_ENABLED" "false"
 ensure_env_value "OLLAMA_BASE_URL" "http://ollama:11434"
 ensure_env_value "OLLAMA_MODEL" "llama3.1:8b"
 ensure_env_value "INSTALL_OLLAMA_CLIENT" "false"
+ensure_env_value "INSTALL_PDF_OCR" "true"
 
 ensure_env_value "RETRIEVAL_MODE" "vector"
 ensure_env_value "HYBRID_FUSION_STRATEGY" "rrf"
@@ -146,7 +177,27 @@ ensure_env_value "RERANKER_BATCH_SIZE" "16"
 ensure_env_value "DOCUMENT_CHUNK_SIZE" "1000"
 ensure_env_value "DOCUMENT_CHUNK_OVERLAP" "150"
 ensure_env_value "MAX_REQUEST_BODY_BYTES" "26214400"
-ensure_env_value "MAX_UPLOAD_BYTES" "26214400"
+if [[ -z "$(get_env_value MAX_UPLOAD_FILE_SIZE)" ]]; then
+  if [[ -n "$(get_env_value MAX_UPLOAD_BYTES)" ]]; then
+    set_env_value "MAX_UPLOAD_FILE_SIZE" "$(get_env_value MAX_UPLOAD_BYTES)"
+  else
+    set_env_value "MAX_UPLOAD_FILE_SIZE" "26214400"
+  fi
+fi
+ensure_env_value "MAX_UPLOAD_BYTES" "$(get_env_value MAX_UPLOAD_FILE_SIZE)"
+ensure_env_value "MAX_BULK_UPLOAD_SIZE" "268435456"
+ensure_env_value "MAX_BULK_FILE_COUNT" "100"
+ensure_env_value "NGINX_CLIENT_MAX_BODY_SIZE" "256m"
+ensure_env_value "NGINX_PROXY_READ_TIMEOUT" "1800s"
+ensure_env_value "NGINX_PROXY_SEND_TIMEOUT" "1800s"
+ensure_env_value "VITE_API_TIMEOUT_MS" "1800000"
+ensure_env_value "PDF_MIN_TEXT_CHARS" "20"
+ensure_env_value "PDF_OCR_ENABLED" "true"
+ensure_env_value "PDF_OCR_LANGUAGES" "jpn+eng"
+ensure_env_value "PDF_OCR_DPI" "200"
+ensure_env_value "PDF_OCR_TIMEOUT_SECONDS" "120"
+ensure_env_value "PDF_OCR_MAX_PAGES" "100"
+ensure_env_value "PDF_TEXT_EXTRACTION_TIMEOUT_SECONDS" "30"
 ensure_env_value "SECURITY_HEADERS_ENABLED" "true"
 ensure_env_value "RATE_LIMIT_ENABLED" "true"
 ensure_env_value "RATE_LIMIT_REQUESTS" "120"
@@ -174,12 +225,12 @@ ensure_env_value "KB_BOOTSTRAP_ADMIN_EMAIL" "admin@example.com"
 ensure_env_value "KB_BOOTSTRAP_ADMIN_PASSWORD" "Admin-$(random_alnum 28)-9"
 mkdir -p backups/qdrant
 
-docker compose up -d --build
+docker_compose up -d --build
 
 echo "Waiting for API readiness..."
 API_READY="false"
 for _ in $(seq 1 90); do
-  if docker compose exec -T api python - <<'PY' >/dev/null 2>&1
+  if docker_compose exec -T api python - <<'PY' >/dev/null 2>&1
 import urllib.request
 urllib.request.urlopen("http://localhost:8000/health/ready", timeout=3).read()
 PY
@@ -195,7 +246,7 @@ if [[ "${API_READY}" != "true" ]]; then
   exit 1
 fi
 
-docker compose exec -T api python scripts/bootstrap_release.py
+docker_compose exec -T api python scripts/bootstrap_release.py
 
 cat <<EOF
 

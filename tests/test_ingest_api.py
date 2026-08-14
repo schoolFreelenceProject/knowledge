@@ -13,11 +13,21 @@ from app.services.metadata_service import MetadataPersistenceError
 class FakeUploadFile:
     filename = "policy.pdf"
 
-    def __init__(self) -> None:
+    def __init__(self, content: bytes = b"%PDF fake content") -> None:
+        self.content = content
+        self._offset = 0
         self.closed = False
 
-    async def read(self) -> bytes:
-        return b"%PDF fake content"
+    async def read(self, size: int = -1) -> bytes:
+        if self._offset >= len(self.content):
+            return b""
+
+        if size is None or size < 0:
+            size = len(self.content) - self._offset
+
+        chunk = self.content[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
 
     async def close(self) -> None:
         self.closed = True
@@ -27,10 +37,19 @@ class FakeFolderUploadFile:
     def __init__(self, filename: str, content: bytes) -> None:
         self.filename = filename
         self.content = content
+        self._offset = 0
         self.closed = False
 
-    async def read(self) -> bytes:
-        return self.content
+    async def read(self, size: int = -1) -> bytes:
+        if self._offset >= len(self.content):
+            return b""
+
+        if size is None or size < 0:
+            size = len(self.content) - self._offset
+
+        chunk = self.content[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
 
     async def close(self) -> None:
         self.closed = True
@@ -94,6 +113,19 @@ def _build_user() -> AuthenticatedUser:
     )
 
 
+def _set_upload_limits(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    file_size: int,
+    bulk_size: int,
+    file_count: int,
+) -> None:
+    monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", str(file_size))
+    monkeypatch.setenv("MAX_UPLOAD_FILE_SIZE", str(file_size))
+    monkeypatch.setenv("MAX_BULK_UPLOAD_SIZE", str(bulk_size))
+    monkeypatch.setenv("MAX_BULK_FILE_COUNT", str(file_count))
+
+
 def test_ingest_document_hides_internal_metadata_errors() -> None:
     upload = FakeUploadFile()
 
@@ -114,7 +146,30 @@ def test_ingest_document_hides_internal_metadata_errors() -> None:
     assert "document_chunks" not in exc_info.value.detail
 
 
-def test_ingest_document_folder_returns_per_file_results_and_closes_uploads() -> None:
+def test_ingest_document_rejects_single_oversized_file(monkeypatch) -> None:
+    _set_upload_limits(monkeypatch, file_size=4, bulk_size=20, file_count=10)
+    upload = FakeUploadFile(content=b"x" * 5)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            ingest_document(
+                file=upload,
+                current_user=_build_user(),
+                ingestion_service=FakeIngestionService(),
+            )
+        )
+
+    assert upload.closed is True
+    assert exc_info.value.status_code == 413
+    assert exc_info.value.detail == (
+        "Uploaded file is too large. Maximum allowed file size is 4 bytes."
+    )
+
+
+def test_ingest_document_folder_under_limit_returns_results_and_closes_uploads(
+    monkeypatch,
+) -> None:
+    _set_upload_limits(monkeypatch, file_size=20, bulk_size=40, file_count=2)
     uploads = [
         FakeFolderUploadFile("leave.md", b"# Leave"),
         FakeFolderUploadFile("logo.png", b"binary"),
@@ -135,6 +190,78 @@ def test_ingest_document_folder_returns_per_file_results_and_closes_uploads() ->
     assert response.indexed == 1
     assert response.skipped == 1
     assert response.results[0].relative_path == "HR/leave.md"
+
+
+def test_ingest_document_folder_rejects_total_payload_over_limit(monkeypatch) -> None:
+    _set_upload_limits(monkeypatch, file_size=4, bulk_size=5, file_count=10)
+    uploads = [
+        FakeFolderUploadFile("one.md", b"123"),
+        FakeFolderUploadFile("two.md", b"456"),
+    ]
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            ingest_document_folder(
+                folder_name="CompanyDocs",
+                relative_paths=["one.md", "two.md"],
+                files=uploads,
+                current_user=_build_user(),
+                ingestion_service=FakeFolderIngestionService(),
+            )
+        )
+
+    assert [upload.closed for upload in uploads] == [True, True]
+    assert exc_info.value.status_code == 413
+    assert exc_info.value.detail == (
+        "Folder upload is too large. Maximum allowed total size is 5 bytes."
+    )
+
+
+def test_ingest_document_folder_rejects_single_oversized_file(monkeypatch) -> None:
+    _set_upload_limits(monkeypatch, file_size=4, bulk_size=20, file_count=10)
+    uploads = [FakeFolderUploadFile("large.md", b"12345")]
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            ingest_document_folder(
+                folder_name="CompanyDocs",
+                relative_paths=["large.md"],
+                files=uploads,
+                current_user=_build_user(),
+                ingestion_service=FakeFolderIngestionService(),
+            )
+        )
+
+    assert uploads[0].closed is True
+    assert exc_info.value.status_code == 413
+    assert exc_info.value.detail == (
+        "Uploaded file is too large. Maximum allowed file size is 4 bytes."
+    )
+
+
+def test_ingest_document_folder_rejects_file_count_limit(monkeypatch) -> None:
+    _set_upload_limits(monkeypatch, file_size=20, bulk_size=40, file_count=1)
+    uploads = [
+        FakeFolderUploadFile("leave.md", b"# Leave"),
+        FakeFolderUploadFile("security.md", b"# Security"),
+    ]
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            ingest_document_folder(
+                folder_name="CompanyDocs",
+                relative_paths=["leave.md", "security.md"],
+                files=uploads,
+                current_user=_build_user(),
+                ingestion_service=FakeFolderIngestionService(),
+            )
+        )
+
+    assert [upload.closed for upload in uploads] == [True, True]
+    assert exc_info.value.status_code == 413
+    assert exc_info.value.detail == (
+        "Folder upload has too many files. Maximum allowed file count is 1."
+    )
 
 
 def test_ingest_document_folder_rejects_mismatched_files_and_paths() -> None:

@@ -921,7 +921,21 @@ Docker Compose တွင် default values များကိုသတ်မှ�
 - `DOCUMENT_CHUNK_SIZE=1000`
 - `DOCUMENT_CHUNK_OVERLAP=150`
 - `MAX_REQUEST_BODY_BYTES=26214400`
-- `MAX_UPLOAD_BYTES=26214400`
+- `MAX_UPLOAD_FILE_SIZE=26214400`
+- `MAX_UPLOAD_BYTES=26214400` backward-compatible alias for `MAX_UPLOAD_FILE_SIZE`
+- `MAX_BULK_UPLOAD_SIZE=268435456`
+- `MAX_BULK_FILE_COUNT=100`
+- `NGINX_CLIENT_MAX_BODY_SIZE=256m`
+- `NGINX_PROXY_READ_TIMEOUT=1800s`
+- `NGINX_PROXY_SEND_TIMEOUT=1800s`
+- `VITE_API_TIMEOUT_MS=1800000`
+- `PDF_MIN_TEXT_CHARS=20`
+- `PDF_OCR_ENABLED=true`
+- `PDF_OCR_LANGUAGES=jpn+eng`
+- `PDF_OCR_DPI=200`
+- `PDF_OCR_TIMEOUT_SECONDS=120`
+- `PDF_OCR_MAX_PAGES=100`
+- `PDF_TEXT_EXTRACTION_TIMEOUT_SECONDS=30`
 - `SECURITY_HEADERS_ENABLED=true`
 - `RATE_LIMIT_ENABLED=true`
 - `RATE_LIMIT_REQUESTS=120`
@@ -967,6 +981,7 @@ Operational hardening added:
 - dependency readiness endpoint for PostgreSQL and Qdrant by default
 - Docker health checks and restart policies
 - request size limit, upload size validation, security headers, rate limiting
+- text-first PDF extraction with optional Japanese OCR fallback for scanned PDFs
 - production JWT secret validation and code repository host allowlist
 - audit logs for auth, ingestion, document management, and ACL changes
 - benchmark and vector consistency audit scripts
