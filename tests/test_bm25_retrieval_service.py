@@ -1,5 +1,5 @@
 from app.schemas.documents import ChunkMetadata
-from app.services.bm25_retrieval_service import BM25RetrievalService
+from app.services.bm25_retrieval_service import BM25RetrievalService, _tokenize
 from app.services.vector_store import RetrievalDocument
 
 
@@ -108,3 +108,70 @@ def test_bm25_retrieval_empty_allowed_point_filter_returns_no_results() -> None:
     )
 
     assert bm25_service.retrieve("remote", top_k=3, allowed_point_ids=[]) == []
+
+
+def test_bm25_tokenizer_generates_japanese_tokens() -> None:
+    tokens = _tokenize("経費精算とカタカナ")
+
+    assert "経費精算" in tokens
+    assert "経費" in tokens
+    assert "カタカナ" in tokens
+    assert "カタ" in tokens
+
+
+def test_bm25_retrieval_matches_japanese_kanji_terms() -> None:
+    vector_store = FakeVectorStore(
+        [
+            _build_document(
+                point_id="point-1",
+                filename="expense_policy.md",
+                text="経費精算には領収書の添付が必要です。",
+            ),
+            _build_document(
+                point_id="point-2",
+                filename="leave_policy.md",
+                text="有給休暇は上長の承認が必要です。",
+            ),
+        ]
+    )
+    bm25_service = BM25RetrievalService(vector_store=vector_store)
+
+    results = bm25_service.retrieve(query="経費精算", top_k=2)
+
+    assert [result.filename for result in results] == ["expense_policy.md"]
+
+
+def test_bm25_retrieval_normalizes_kana_and_full_width_latin() -> None:
+    vector_store = FakeVectorStore(
+        [
+            _build_document(
+                point_id="point-1",
+                filename="network.md",
+                text="VPN 接続とカタカナ表記の確認を行います。",
+            )
+        ]
+    )
+    bm25_service = BM25RetrievalService(vector_store=vector_store)
+
+    kana_results = bm25_service.retrieve(query="ｶﾀｶﾅ", top_k=1)
+    mixed_results = bm25_service.retrieve(query="ＶＰＮ　接続", top_k=1)
+
+    assert [result.filename for result in kana_results] == ["network.md"]
+    assert [result.filename for result in mixed_results] == ["network.md"]
+
+
+def test_bm25_retrieval_matches_hiragana_terms() -> None:
+    vector_store = FakeVectorStore(
+        [
+            _build_document(
+                point_id="point-1",
+                filename="guide.md",
+                text="ひらがなの検索テストを追加します。",
+            )
+        ]
+    )
+    bm25_service = BM25RetrievalService(vector_store=vector_store)
+
+    results = bm25_service.retrieve(query="ひらがな", top_k=1)
+
+    assert [result.filename for result in results] == ["guide.md"]

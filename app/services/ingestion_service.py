@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -104,6 +105,7 @@ class IngestionService:
         permission_service: PermissionService | None = None,
         max_upload_bytes: int | None = None,
         pdf_extraction_config: PdfExtractionConfig | None = None,
+        retrieval_index_refresh: Callable[[], None] | None = None,
     ) -> None:
         self.documents_dir = Path(documents_dir)
         self.chunk_config = chunk_config
@@ -113,6 +115,7 @@ class IngestionService:
         self.permission_service = permission_service
         self.max_upload_bytes = max_upload_bytes
         self.pdf_extraction_config = pdf_extraction_config
+        self.retrieval_index_refresh = retrieval_index_refresh
 
     def ingest_uploaded_document(
         self,
@@ -249,6 +252,8 @@ class IngestionService:
                 raise MetadataPersistenceError(
                     f"Failed to grant uploader document access: {exc}"
                 ) from exc
+
+        _refresh_retrieval_index_best_effort(self.retrieval_index_refresh)
 
         return IngestResponse(
             document_id=persisted_metadata.document_id,
@@ -552,7 +557,7 @@ def _safe_filename(filename: str) -> str:
     if not raw_filename or raw_filename in {".", ".."}:
         raise IngestionServiceError("Uploaded document filename is required.")
 
-    safe_filename = re.sub(r"[^A-Za-z0-9._ -]", "_", raw_filename).strip(" .")
+    safe_filename = _safe_path_component(raw_filename)
     if not safe_filename:
         raise IngestionServiceError("Uploaded document filename is invalid.")
 
@@ -594,7 +599,12 @@ def _safe_relative_path(relative_path: str) -> str:
 
 
 def _safe_path_component(component: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._ -]", "_", component.strip()).strip(" .")
+    return "".join(
+        character
+        if character.isalnum() or character in "._ -"
+        else "_"
+        for character in component.strip()
+    ).strip(" .")
 
 
 def _safe_folder_name(folder_name: str) -> str:
@@ -751,3 +761,15 @@ def _existing_document_response(
 
 def _collection_name(vector_store: QdrantVectorStore) -> str:
     return getattr(vector_store, "collection_name", "company_documents")
+
+
+def _refresh_retrieval_index_best_effort(
+    refresh: Callable[[], None] | None,
+) -> None:
+    if refresh is None:
+        return
+
+    try:
+        refresh()
+    except Exception:
+        logger.warning("Failed to refresh retrieval indexes after ingestion.", exc_info=True)

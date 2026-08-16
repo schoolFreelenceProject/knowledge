@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 ContentType = Literal["document", "code"]
-DocumentFileType = Literal["pdf", "markdown", "code"]
+DocumentFileType = Literal["pdf", "markdown", "docx", "xlsx", "pptx", "code"]
 
 
 class DocumentMetadata(BaseModel):
@@ -17,8 +17,18 @@ class DocumentMetadata(BaseModel):
     )
     page_number: int | None = Field(
         default=None,
-        description="One-based PDF page number. Markdown files do not have pages.",
+        description="One-based PDF page number. Non-PDF files do not have pages.",
     )
+    section_heading: str | None = None
+    heading_path: str | None = None
+    block_kind: str | None = None
+    workbook: str | None = None
+    sheet_name: str | None = None
+    cell_range: str | None = None
+    row_start: int | None = None
+    row_end: int | None = None
+    slide_number: int | None = None
+    slide_title: str | None = None
     repo_name: str | None = None
     repo_url: str | None = None
     branch: str | None = None

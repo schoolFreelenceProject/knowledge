@@ -9,6 +9,10 @@ class ExpectedSource(BaseModel):
     page_number: int | None = None
     source_path: str | None = None
     content_type: str | None = None
+    section_heading: str | None = None
+    sheet_name: str | None = None
+    cell_range: str | None = None
+    slide_number: int | None = None
     symbol_name: str | None = None
 
     model_config = ConfigDict(extra="allow")
@@ -41,6 +45,15 @@ class RetrievedDocument(BaseModel):
     source_path: str
     file_type: str | None = None
     page_number: int | None
+    section_heading: str | None = None
+    heading_path: str | None = None
+    workbook: str | None = None
+    sheet_name: str | None = None
+    cell_range: str | None = None
+    row_start: int | None = None
+    row_end: int | None = None
+    slide_number: int | None = None
+    slide_title: str | None = None
     chunk_index: int
     language: str | None = None
     symbol_name: str | None = None

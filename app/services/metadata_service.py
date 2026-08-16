@@ -28,6 +28,16 @@ class StoredChunkMetadata:
     qdrant_point_id: str
     chunk_index: int
     page_number: int | None
+    section_heading: str | None
+    heading_path: str | None
+    block_kind: str | None
+    workbook: str | None
+    sheet_name: str | None
+    cell_range: str | None
+    row_start: int | None
+    row_end: int | None
+    slide_number: int | None
+    slide_title: str | None
     start_char: int
     end_char: int
     created_at: datetime
@@ -355,6 +365,16 @@ def _build_chunk_records(
             qdrant_point_id=qdrant_point_id,
             chunk_index=chunk.metadata.chunk_index,
             page_number=chunk.metadata.page_number,
+            section_heading=chunk.metadata.section_heading,
+            heading_path=chunk.metadata.heading_path,
+            block_kind=chunk.metadata.block_kind,
+            workbook=chunk.metadata.workbook,
+            sheet_name=chunk.metadata.sheet_name,
+            cell_range=chunk.metadata.cell_range,
+            row_start=chunk.metadata.row_start,
+            row_end=chunk.metadata.row_end,
+            slide_number=chunk.metadata.slide_number,
+            slide_title=chunk.metadata.slide_title,
             start_char=chunk.metadata.start_char,
             end_char=chunk.metadata.end_char,
         )
@@ -417,6 +437,16 @@ def _to_stored_document_metadata(
                 qdrant_point_id=chunk.qdrant_point_id,
                 chunk_index=chunk.chunk_index,
                 page_number=chunk.page_number,
+                section_heading=chunk.section_heading,
+                heading_path=chunk.heading_path,
+                block_kind=chunk.block_kind,
+                workbook=chunk.workbook,
+                sheet_name=chunk.sheet_name,
+                cell_range=chunk.cell_range,
+                row_start=chunk.row_start,
+                row_end=chunk.row_end,
+                slide_number=chunk.slide_number,
+                slide_title=chunk.slide_title,
                 start_char=chunk.start_char,
                 end_char=chunk.end_char,
                 created_at=chunk.created_at,

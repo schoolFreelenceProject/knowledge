@@ -1,4 +1,6 @@
 import hashlib
+import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from app.schemas.document_management import (
@@ -23,6 +25,9 @@ from app.services.vector_store import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class DocumentManagementError(RuntimeError):
     """Raised when a document management operation cannot be completed."""
 
@@ -40,6 +45,7 @@ class DocumentManagementService:
         vector_store: QdrantVectorStore,
         metadata_service: DocumentMetadataService,
         pdf_extraction_config: PdfExtractionConfig | None = None,
+        retrieval_index_refresh: Callable[[], None] | None = None,
     ) -> None:
         self.documents_dir = Path(documents_dir)
         self.chunk_config = chunk_config
@@ -47,6 +53,7 @@ class DocumentManagementService:
         self.vector_store = vector_store
         self.metadata_service = metadata_service
         self.pdf_extraction_config = pdf_extraction_config
+        self.retrieval_index_refresh = retrieval_index_refresh
 
     def list_documents(
         self,
@@ -71,6 +78,7 @@ class DocumentManagementService:
         self.metadata_service.delete_document(document_id)
 
         deleted_file, cleanup_warning = _delete_stored_file(document_path)
+        _refresh_retrieval_index_best_effort(self.retrieval_index_refresh)
 
         return DeleteDocumentResponse(
             document_id=document.id,
@@ -139,6 +147,7 @@ class DocumentManagementService:
             vector_store=self.vector_store,
             point_ids=stale_point_ids,
         )
+        _refresh_retrieval_index_best_effort(self.retrieval_index_refresh)
 
         return ReindexDocumentResponse(
             document_id=document_id,
@@ -186,6 +195,16 @@ def _to_document_detail(document: StoredDocumentMetadata) -> DocumentDetail:
                 qdrant_point_id=chunk.qdrant_point_id,
                 chunk_index=chunk.chunk_index,
                 page_number=chunk.page_number,
+                section_heading=chunk.section_heading,
+                heading_path=chunk.heading_path,
+                block_kind=chunk.block_kind,
+                workbook=chunk.workbook,
+                sheet_name=chunk.sheet_name,
+                cell_range=chunk.cell_range,
+                row_start=chunk.row_start,
+                row_end=chunk.row_end,
+                slide_number=chunk.slide_number,
+                slide_title=chunk.slide_title,
                 start_char=chunk.start_char,
                 end_char=chunk.end_char,
                 created_at=chunk.created_at,
@@ -233,3 +252,18 @@ def _cleanup_new_vectors_best_effort(
 
 def _build_file_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def _refresh_retrieval_index_best_effort(
+    refresh: Callable[[], None] | None,
+) -> None:
+    if refresh is None:
+        return
+
+    try:
+        refresh()
+    except Exception:
+        logger.warning(
+            "Failed to refresh retrieval indexes after document management change.",
+            exc_info=True,
+        )

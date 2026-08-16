@@ -108,6 +108,24 @@ def test_vector_mode_preserves_existing_vector_retrieval_behavior() -> None:
     assert bm25_service.calls == []
 
 
+def test_vector_mode_normalizes_japanese_query_before_embedding() -> None:
+    embedding_service = FakeEmbeddingService()
+    vector_store = FakeVectorStore([])
+    retrieval_service = RetrievalService(
+        embedding_service=embedding_service,
+        vector_store=vector_store,
+        config=RetrievalConfig(mode="vector"),
+    )
+
+    retrieval_service.retrieve(
+        query=" ＶＰＮ　接続 ",
+        top_k=3,
+        allowed_point_ids=["point-1"],
+    )
+
+    assert embedding_service.calls == [["VPN 接続"]]
+
+
 def test_bm25_mode_uses_bm25_without_vector_embedding() -> None:
     embedding_service = FakeEmbeddingService()
     bm25_service = FakeBM25RetrievalService(

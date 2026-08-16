@@ -235,6 +235,48 @@ def test_evaluation_report_matches_code_sources_by_content_type_and_symbol() -> 
     assert result.retrieved_documents[1].start_line == 12
 
 
+def test_evaluation_report_matches_japanese_office_source_metadata() -> None:
+    case = EvaluationCase(
+        id="jp-xlsx-expense",
+        question="経費精算の手順は?",
+        expected_sources=[
+            ExpectedSource(
+                filename="勤務表.xlsx",
+                source_path="勤務表.xlsx",
+                sheet_name="用語",
+                cell_range="A1:B2",
+            ),
+        ],
+        top_k=1,
+    )
+    retrieval_result = _build_result("勤務表.xlsx", score=0.77, file_type="xlsx")
+    retrieval_result = retrieval_result.model_copy(
+        update={
+            "text": "Workbook: 勤務表.xlsx\nSheet: 用語\nRow 2: A=経費精算",
+            "metadata": retrieval_result.metadata.model_copy(
+                update={
+                    "workbook": "勤務表.xlsx",
+                    "sheet_name": "用語",
+                    "cell_range": "A1:B2",
+                    "row_start": 1,
+                    "row_end": 2,
+                }
+            ),
+        }
+    )
+    evaluation_service = EvaluationService(
+        retrieval_service=FakeRetrievalService({case.question: [retrieval_result]}),
+        generation_service=FakeGenerationService(),
+    )
+
+    report = evaluation_service.evaluate_cases(cases=[case], default_top_k=5)
+    result = report.cases[0]
+
+    assert result.retrieval_score.hit is True
+    assert result.retrieved_documents[0].sheet_name == "用語"
+    assert result.retrieved_documents[0].cell_range == "A1:B2"
+
+
 def test_evaluation_report_supports_optional_feedback_metrics() -> None:
     case = EvaluationCase(
         id="remote-work",

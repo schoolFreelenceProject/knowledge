@@ -8,6 +8,7 @@ from app.services.reranker_service import (
     CrossEncoderRerankerService,
     RerankerServiceError,
 )
+from app.services.text_normalization import normalize_query_text
 from app.services.trace_context import trace_timer
 from app.services.vector_store import QdrantVectorStore
 
@@ -49,7 +50,7 @@ class RetrievalService:
         content_types: list[str] | None = None,
         languages: list[str] | None = None,
     ) -> list[RetrievalResult]:
-        normalized_query = query.strip()
+        normalized_query = normalize_query_text(query)
         if not normalized_query:
             raise RetrievalServiceError("Query cannot be empty.")
 

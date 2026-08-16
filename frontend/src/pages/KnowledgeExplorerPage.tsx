@@ -289,7 +289,7 @@ function SearchResultItem({
           <>
             <span>{result.filename}</span>
             <span>Chunk {result.chunk_index}</span>
-            {result.page_number ? <span>Page {result.page_number}</span> : null}
+            <span>{documentLocation(result)}</span>
           </>
         )}
       </div>
@@ -373,6 +373,23 @@ function sourceDetail(result: KnowledgeSearchResult): string {
     return `${result.repo_name ?? "Code source"} / ${result.file_path ?? ""} / ${symbol} / ${lineRange(result)}`;
   }
 
-  const page = result.page_number ? ` / Page ${result.page_number}` : "";
-  return `${result.filename ?? "Document"} / Chunk ${result.chunk_index}${page}`;
+  return `${result.filename ?? "Document"} / Chunk ${result.chunk_index} / ${documentLocation(result)}`;
+}
+
+function documentLocation(result: KnowledgeSearchResult): string {
+  if (result.page_number) {
+    return `Page ${result.page_number}`;
+  }
+  if (result.sheet_name) {
+    const range = result.cell_range ? ` ${result.cell_range}` : "";
+    return `${result.sheet_name}${range}`;
+  }
+  if (result.slide_number) {
+    const title = result.slide_title ? `: ${result.slide_title}` : "";
+    return `Slide ${result.slide_number}${title}`;
+  }
+  if (result.heading_path || result.section_heading) {
+    return result.heading_path ?? result.section_heading ?? "Document section";
+  }
+  return "Document section";
 }

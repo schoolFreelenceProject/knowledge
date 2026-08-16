@@ -1,6 +1,12 @@
 import hashlib
+from io import BytesIO
 
 import pytest
+from docx import Document as DocxDocument
+from openpyxl import Workbook
+from pptx import Presentation
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -250,6 +256,56 @@ def test_ingestion_auto_grants_uploader_document_access(tmp_path) -> None:
         assert session.get(DocumentRecord, response.document_id) is not None
 
 
+def test_single_japanese_docx_upload_indexes_and_preserves_acl_and_filename(
+    tmp_path,
+) -> None:
+    (
+        ingestion_service,
+        _metadata_service,
+        permission_service,
+        _vector_store,
+        session_factory,
+    ) = _build_folder_services(tmp_path)
+    content = _docx_bytes("休暇制度", "日本語の有給休暇ポリシーです。")
+
+    response = ingestion_service.ingest_uploaded_document(
+        filename="就業規則.docx",
+        content=content,
+        uploader_user_id=7,
+    )
+
+    with session_factory() as session:
+        document = session.get(DocumentRecord, response.document_id)
+        chunks = session.scalars(select(DocumentChunkRecord)).all()
+
+    assert response.file_type == "docx"
+    assert response.filename == "就業規則.docx"
+    assert document is not None
+    assert document.storage_path == "就業規則.docx"
+    assert permission_service.list_accessible_document_ids(7) == [response.document_id]
+    assert chunks[0].section_heading == "休暇制度"
+
+
+def test_ingestion_refreshes_retrieval_index_after_successful_upload(tmp_path) -> None:
+    metadata_service, _session_factory = _build_sqlite_metadata_service()
+    refresh_calls: list[str] = []
+    ingestion_service = IngestionService(
+        documents_dir=tmp_path,
+        chunk_config=ChunkingConfig(chunk_size=200, chunk_overlap=20),
+        embedding_service=FakeEmbeddingService(),
+        vector_store=FakeVectorStore(),
+        metadata_service=metadata_service,
+        retrieval_index_refresh=lambda: refresh_calls.append("refresh"),
+    )
+
+    ingestion_service.ingest_uploaded_document(
+        filename="security.md",
+        content=b"# Security Policy\n\nEmployees must report incidents quickly.",
+    )
+
+    assert refresh_calls == ["refresh"]
+
+
 def test_permission_failure_cleans_up_ingested_state(tmp_path) -> None:
     metadata_service, session_factory = _build_sqlite_metadata_service()
     vector_store = FakeVectorStore()
@@ -339,6 +395,74 @@ def test_folder_ingestion_indexes_nested_documents_preserves_paths_and_acl(
     }
     assert (tmp_path / "HR" / "leave.md").exists()
     assert (tmp_path / "IT" / "security.md").exists()
+
+
+def test_folder_ingestion_indexes_mixed_formats_and_continues_after_bad_office_file(
+    tmp_path,
+) -> None:
+    (
+        ingestion_service,
+        _metadata_service,
+        _permission_service,
+        vector_store,
+        session_factory,
+    ) = _build_folder_services(tmp_path)
+
+    response = ingestion_service.ingest_folder_documents(
+        folder_name="MixedDocs",
+        files=[
+            FolderUploadItem(
+                relative_path="Policies/leave.md",
+                content=b"# Leave\n\nEmployees can request paid leave.",
+            ),
+            FolderUploadItem(
+                relative_path="PDF/security.pdf",
+                content=_pdf_bytes("Security reviews are required quarterly."),
+            ),
+            FolderUploadItem(
+                relative_path="Office/就業規則.docx",
+                content=_docx_bytes("休暇制度", "有給休暇の申請手順です。"),
+            ),
+            FolderUploadItem(
+                relative_path="Office/勤務表.xlsx",
+                content=_xlsx_bytes(),
+            ),
+            FolderUploadItem(
+                relative_path="Office/説明会.pptx",
+                content=_pptx_bytes(),
+            ),
+            FolderUploadItem(
+                relative_path="Office/broken.docx",
+                content=b"not a valid docx file",
+            ),
+        ],
+        uploader_user_id=7,
+    )
+
+    with session_factory() as session:
+        documents = session.scalars(
+            select(DocumentRecord).order_by(DocumentRecord.storage_path)
+        ).all()
+        chunks = session.scalars(select(DocumentChunkRecord)).all()
+        permissions = session.scalars(select(DocumentPermissionRecord)).all()
+
+    assert response.files_discovered == 6
+    assert response.indexed == 5
+    assert response.failed == 1
+    assert response.results[-1].status == "failed"
+    assert response.results[-1].reason == "extraction_failed"
+    assert {document.file_type for document in documents} == {
+        "markdown",
+        "pdf",
+        "docx",
+        "xlsx",
+        "pptx",
+    }
+    assert "Office/就業規則.docx" in {document.storage_path for document in documents}
+    assert len(permissions) == 5
+    assert vector_store.active_point_ids == {
+        chunk.qdrant_point_id for chunk in chunks
+    }
 
 
 def test_folder_ingestion_skips_unsupported_hidden_binary_large_and_unsafe_paths(
@@ -514,3 +638,43 @@ def test_folder_ingestion_reports_corrupt_pdf_without_blocking_good_files(
     assert response.results[0].status == "indexed"
     assert response.results[1].status == "failed"
     assert response.results[1].reason == "unsupported_or_corrupt_pdf"
+
+
+def _docx_bytes(heading: str, body: str) -> bytes:
+    buffer = BytesIO()
+    document = DocxDocument()
+    document.add_heading(heading, level=1)
+    document.add_paragraph(body)
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _xlsx_bytes() -> bytes:
+    buffer = BytesIO()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "勤怠"
+    sheet.append(["社員", "状態"])
+    sheet.append(["山田太郎", "在宅勤務"])
+    workbook.create_sheet("空シート")
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def _pptx_bytes() -> bytes:
+    buffer = BytesIO()
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[0])
+    slide.shapes.title.text = "全社会議"
+    slide.placeholders[1].text = "検索品質を確認します。"
+    presentation.save(buffer)
+    return buffer.getvalue()
+
+
+def _pdf_bytes(text: str) -> bytes:
+    buffer = BytesIO()
+    document = canvas.Canvas(buffer, pagesize=letter)
+    document.setFont("Helvetica", 12)
+    document.drawString(72, 720, text)
+    document.save()
+    return buffer.getvalue()

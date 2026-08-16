@@ -154,6 +154,16 @@ class KnowledgeExplorerService:
             filename=source.document.filename,
             source_path=source.document.storage_path,
             page_number=source.chunk.page_number,
+            section_heading=result.metadata.section_heading,
+            heading_path=result.metadata.heading_path,
+            block_kind=result.metadata.block_kind,
+            workbook=result.metadata.workbook,
+            sheet_name=result.metadata.sheet_name,
+            cell_range=result.metadata.cell_range,
+            row_start=result.metadata.row_start,
+            row_end=result.metadata.row_end,
+            slide_number=result.metadata.slide_number,
+            slide_title=result.metadata.slide_title,
             chunk_index=source.chunk.chunk_index,
         )
 

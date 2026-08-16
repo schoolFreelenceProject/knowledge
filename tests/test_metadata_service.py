@@ -54,6 +54,29 @@ def _build_chunks() -> list[DocumentChunk]:
     ]
 
 
+def _build_office_chunks() -> list[DocumentChunk]:
+    return [
+        DocumentChunk(
+            text="Workbook: 勤務表.xlsx\nSheet: 勤怠\nRow 2: A=山田太郎",
+            metadata=ChunkMetadata(
+                filename="勤務表.xlsx",
+                source_path="勤務表.xlsx",
+                file_type="xlsx",
+                page_number=None,
+                workbook="勤務表.xlsx",
+                sheet_name="勤怠",
+                cell_range="A1:C2",
+                row_start=1,
+                row_end=2,
+                block_kind="sheet_rows",
+                chunk_index=1,
+                start_char=0,
+                end_char=49,
+            ),
+        )
+    ]
+
+
 def test_document_metadata_creation() -> None:
     metadata_service, session_factory = _build_metadata_service()
 
@@ -103,3 +126,42 @@ def test_chunk_metadata_creation() -> None:
         assert chunk.chunk_index == 1
         assert chunk.start_char == 0
         assert chunk.end_char == 52
+
+
+def test_chunk_metadata_preserves_office_location_fields() -> None:
+    metadata_service, session_factory = _build_metadata_service()
+    document = ExtractedDocument(
+        text="Workbook: 勤務表.xlsx\nSheet: 勤怠\nRow 2: A=山田太郎",
+        metadata=DocumentMetadata(
+            filename="勤務表.xlsx",
+            source_path="勤務表.xlsx",
+            file_type="xlsx",
+            workbook="勤務表.xlsx",
+            sheet_name="勤怠",
+            cell_range="A1:C2",
+            row_start=1,
+            row_end=2,
+            block_kind="sheet_rows",
+        ),
+    )
+
+    persisted = metadata_service.save_document_metadata(
+        extracted_documents=[document],
+        chunks=_build_office_chunks(),
+        stored_batch=StoredVectorBatch(
+            collection_name="company_documents",
+            stored_count=1,
+            vector_size=384,
+            point_ids=["point-office-1"],
+        ),
+        file_hash="d" * 64,
+        storage_path="勤務表.xlsx",
+    )
+
+    stored = metadata_service.get_document(persisted.document_id)
+
+    assert stored.chunks[0].workbook == "勤務表.xlsx"
+    assert stored.chunks[0].sheet_name == "勤怠"
+    assert stored.chunks[0].cell_range == "A1:C2"
+    assert stored.chunks[0].row_start == 1
+    assert stored.chunks[0].row_end == 2

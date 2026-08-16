@@ -5,10 +5,14 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.schemas.documents import RetrievalResult
+from app.services.text_normalization import normalize_query_text
 from app.services.vector_store import QdrantVectorStore, RetrievalDocument
 
 
-TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+")
+LATIN_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+")
+TOKEN_RUN_PATTERN = re.compile(
+    r"[A-Za-z0-9]+|[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff々〆〤ー]+"
+)
 
 
 @dataclass(frozen=True)
@@ -208,10 +212,70 @@ def _to_retrieval_result(
 
 
 def _tokenize(text: str) -> list[str]:
-    return [
-        token.casefold()
-        for token in TOKEN_PATTERN.findall(text)
+    tokens: list[str] = []
+    normalized_text = normalize_query_text(text)
+    for token_run in TOKEN_RUN_PATTERN.findall(normalized_text):
+        if LATIN_TOKEN_PATTERN.fullmatch(token_run):
+            tokens.append(token_run.casefold())
+            continue
+
+        tokens.extend(_japanese_ngram_tokens(token_run))
+
+    return tokens
+
+
+def _japanese_ngram_tokens(token_run: str) -> list[str]:
+    characters = [character for character in token_run if not character.isspace()]
+    if not characters:
+        return []
+
+    tokens: list[str] = []
+    token_sequences = [
+        "".join(sequence)
+        for sequence in [characters, *_japanese_script_segments(characters)]
+        if sequence
     ]
+    for token_sequence in token_sequences:
+        sequence_characters = list(token_sequence)
+        tokens.append(token_sequence)
+        for ngram_size in (1, 2, 3):
+            if len(sequence_characters) < ngram_size:
+                continue
+            tokens.extend(
+                "".join(sequence_characters[index : index + ngram_size])
+                for index in range(0, len(sequence_characters) - ngram_size + 1)
+            )
+
+    return list(dict.fromkeys(tokens))
+
+
+def _japanese_script_segments(characters: list[str]) -> list[list[str]]:
+    segments: list[list[str]] = []
+    current_segment: list[str] = []
+    current_script: str | None = None
+
+    for character in characters:
+        script = _japanese_script(character)
+        if current_segment and script != current_script and character != "ー":
+            segments.append(current_segment)
+            current_segment = []
+
+        current_segment.append(character)
+        current_script = script
+
+    if current_segment:
+        segments.append(current_segment)
+
+    return segments
+
+
+def _japanese_script(character: str) -> str:
+    codepoint = ord(character)
+    if 0x3040 <= codepoint <= 0x309F:
+        return "hiragana"
+    if 0x30A0 <= codepoint <= 0x30FF:
+        return "katakana"
+    return "kanji"
 
 
 def _normalize_allowed_point_ids(

@@ -100,6 +100,33 @@ def test_php_parser_uses_file_level_fallback(tmp_path) -> None:
     assert chunks[0].metadata.repository_file_path == "Controller.php"
 
 
+def test_markdown_parser_uses_file_level_fallback(tmp_path) -> None:
+    code_path = tmp_path / "agent.md"
+    code_path.write_text(
+        "# Backend Developer\n\nUse this agent for API and persistence work.\n",
+        encoding="utf-8",
+    )
+
+    parsed_file = TreeSitterCodeParser().parse_file(
+        file_path=code_path,
+        repository_root=tmp_path,
+        repo_url="file:///repo",
+        repo_name="repo",
+        branch="main",
+        commit_sha="a" * 40,
+    )
+    chunks = chunk_code_file(
+        parsed_file,
+        config=CodeChunkingConfig(max_chunk_chars=1000, overlap_lines=1),
+    )
+
+    assert parsed_file.language == "markdown"
+    assert parsed_file.symbols == []
+    assert chunks
+    assert chunks[0].metadata.symbol_kind == "file"
+    assert chunks[0].metadata.repository_file_path == "agent.md"
+
+
 def test_code_chunker_preserves_code_metadata() -> None:
     parser = TreeSitterCodeParser()
     test_file_path = Path(__file__)

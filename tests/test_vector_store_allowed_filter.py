@@ -177,6 +177,42 @@ def test_store_embeddings_cleans_successful_batches_when_later_upsert_fails() ->
     assert len(client.deleted_point_ids) == VECTOR_UPSERT_BATCH_SIZE
 
 
+def test_store_embeddings_includes_office_metadata_in_payload() -> None:
+    client = FakeQdrantClient()
+    vector_store = QdrantVectorStore(
+        url="http://qdrant:6333",
+        collection_name="company_documents",
+        client=client,
+    )
+    chunk = EmbeddedChunk(
+        vector=[1.0, 0.0],
+        text="Workbook: 勤務表.xlsx\nSheet: 勤怠",
+        metadata=ChunkMetadata(
+            filename="勤務表.xlsx",
+            source_path="勤務表.xlsx",
+            file_type="xlsx",
+            page_number=None,
+            workbook="勤務表.xlsx",
+            sheet_name="勤怠",
+            cell_range="A1:B2",
+            row_start=1,
+            row_end=2,
+            chunk_index=1,
+            start_char=0,
+            end_char=30,
+        ),
+    )
+
+    vector_store.store_embeddings([chunk])
+
+    payload = client.upsert_batches[0][0].payload
+    assert payload["file_type"] == "xlsx"
+    assert payload["workbook"] == "勤務表.xlsx"
+    assert payload["sheet_name"] == "勤怠"
+    assert payload["cell_range"] == "A1:B2"
+    assert payload["text"].startswith("Workbook")
+
+
 def _embedded_chunks(count: int) -> list[EmbeddedChunk]:
     return [
         EmbeddedChunk(

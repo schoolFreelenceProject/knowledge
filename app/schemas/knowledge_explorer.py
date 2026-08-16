@@ -41,6 +41,16 @@ class KnowledgeSearchResult(BaseModel):
     filename: str | None = None
     source_path: str | None = None
     page_number: int | None = None
+    section_heading: str | None = None
+    heading_path: str | None = None
+    block_kind: str | None = None
+    workbook: str | None = None
+    sheet_name: str | None = None
+    cell_range: str | None = None
+    row_start: int | None = None
+    row_end: int | None = None
+    slide_number: int | None = None
+    slide_title: str | None = None
     chunk_index: int
 
     repository_id: int | None = None

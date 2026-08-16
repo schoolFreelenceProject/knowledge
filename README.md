@@ -16,7 +16,7 @@ deployment အတွက် hardening လုပ်ထားသည်။
 - PostgreSQL metadata database
 - sentence-transformers local embeddings
 - Docker Compose based local runtime
-- PDF and Markdown document ingestion
+- PDF, Markdown, DOCX, XLSX, and PPTX document ingestion
 - Git repository Code RAG ingestion
 - local document/code folder ingestion
 - JWT authentication
@@ -53,7 +53,7 @@ Company Documents
 ### Component Responsibilities
 
 - **FastAPI**: HTTP API entrypoint ဖြစ်ပြီး ingestion, retrieval, ACL, metadata, source inspection endpoints ကို expose လုပ်မည်။
-- **Document Loader / Parser**: PDF နှင့် Markdown မှ text ထုတ်ယူမည်။
+- **Document Loader / Parser**: PDF, Markdown, DOCX, XLSX, and PPTX မှ text ထုတ်ယူမည်။
 - **Text Chunker**: ရှည်လျားသော document text ကို retrieval အတွက်သင့်တော်သော chunk များအဖြစ်ခွဲမည်။
 - **Embedding Model**: sentence-transformers ဖြင့် chunk တစ်ခုချင်းစီကို vector embedding အဖြစ်ပြောင်းမည်။
 - **Qdrant**: embeddings နှင့် metadata များကိုသိမ်းပြီး semantic search ပြန်ပေးမည်။
@@ -115,7 +115,7 @@ company-document-rag/
 - `app/core/config.py`: chunk size နှင့် overlap ကဲ့သို့ configurable settings များထားမည့်နေရာ။
 - `app/db/`: SQLAlchemy models နှင့် PostgreSQL connection/session setup များထားမည့်နေရာ။
 - `app/services/`: document loading, chunking, embedding, vector store, retrieval, generation စသည့် RAG business logic များထားမည့်နေရာ။
-- `app/services/document_loader.py`: `data/documents/` ထဲမှ PDF နှင့် Markdown files များကိုရှာပြီး text extraction လုပ်မည့် service။
+- `app/services/document_loader.py`: `data/documents/` ထဲမှ PDF, Markdown, DOCX, XLSX, and PPTX files များကိုရှာပြီး text extraction လုပ်မည့် service။
 - `app/services/text_chunker.py`: extracted text ကို configurable size/overlap ဖြင့် chunks ခွဲမည့် service။
 - `app/services/embedding_service.py`: chunks များကို sentence-transformers local model ဖြင့် dense vectors အဖြစ်ပြောင်းမည့် service။
 - `app/services/vector_store.py`: embedded chunks များကို Qdrant collection ထဲသို့သိမ်းရန်နှင့် collection status စစ်ရန် service။
@@ -148,7 +148,7 @@ and source inspection ကိုလုပ်သည်။ Agent logic နှင့
 
 ```text
 data/documents/
-  -> discover PDF and Markdown files
+  -> discover PDF, Markdown, DOCX, XLSX, and PPTX files
   -> parse file text
   -> attach metadata
   -> return extracted document blocks
@@ -168,8 +168,11 @@ Extracted block တစ်ခုချင်းစီတွင် အောက်
 
 - `filename`: original file name
 - `source_path`: `data/documents/` အောက်ရှိ relative path
-- `file_type`: `pdf` or `markdown`
-- `page_number`: PDF အတွက် one-based page number, Markdown အတွက် `null`
+- `file_type`: `pdf`, `markdown`, `docx`, `xlsx`, or `pptx`
+- `page_number`: PDF အတွက် one-based page number, non-PDF အတွက် `null`
+- DOCX fields: `section_heading`, `heading_path`, `block_kind`
+- XLSX fields: `workbook`, `sheet_name`, `cell_range`, `row_start`, `row_end`
+- PPTX fields: `slide_number`, `slide_title`
 
 Chunk တစ်ခုချင်းစီတွင် original metadata မပျောက်အောင်သိမ်းထားပြီး အောက်ပါ fields များထပ်ပါသည်။
 
@@ -188,7 +191,7 @@ Qdrant payload တစ်ခုချင်းစီတွင် အောက်�
 - `text`: original chunk text
 - `filename`: original file name
 - `source_path`: `data/documents/` အောက်ရှိ relative path
-- `file_type`: `pdf` or `markdown`
+- `file_type`: `pdf`, `markdown`, `docx`, `xlsx`, or `pptx`
 - `page_number`: PDF page number or `null`
 - `chunk_index`: source block အတွင်း chunk number
 - `start_char`: extracted text ထဲရှိ chunk start offset
@@ -292,7 +295,7 @@ curl -F "file=@data/documents/company_policy.md" \
 
 ## Inspect Extracted Documents
 
-PDF သို့မဟုတ် Markdown files များကို `data/documents/` ထဲသို့ထည့်ပြီး အောက်ပါ command ဖြင့် extracted result ကိုကြည့်နိုင်သည်။
+PDF, Markdown, DOCX, XLSX, or PPTX files များကို `data/documents/` ထဲသို့ထည့်ပြီး အောက်ပါ command ဖြင့် extracted result ကိုကြည့်နိုင်သည်။
 
 ```bash
 python scripts/inspect_documents.py
@@ -423,8 +426,8 @@ python scripts/query_vectors.py "leave request policy" \
 
 Hybrid Search သည် Vector Search နှင့် BM25 keyword retrieval ကိုပေါင်းပြီး
 default `rrf` fusion strategy ဖြင့် top K results ပြန်ပေးသည်။ Production
-default သည် `RETRIEVAL_MODE=vector` ဖြစ်နေဆဲဖြစ်ပြီး hybrid ကို environment
-variable သို့မဟုတ် CLI flag ဖြင့် enable လုပ်နိုင်သည်။ BM25 index သည်
+default သည် `RETRIEVAL_MODE=hybrid` ဖြစ်ပြီး Japanese exact/lexical queries
+အတွက် BM25 fallback ကို vector retrieval နှင့်အတူသုံးသည်။ BM25 index သည်
 ဤ milestone တွင် in-memory lazy rebuild ဖြစ်သည်။ Running process အတွင်း
 documents အသစ် ingest/reindex လုပ်ပြီးနောက် BM25 corpus refresh လိုပါက API
 process ကို restart လုပ်ပါ။ Reranker သည် default disabled ဖြစ်ပြီး
@@ -903,7 +906,7 @@ Docker Compose တွင် default values များကိုသတ်မှ�
 - `JWT_SECRET_KEY=dev-only-change-this-secret-change-me`
 - `JWT_ALGORITHM=HS256`
 - `JWT_ACCESS_TOKEN_EXPIRE_MINUTES=60`
-- `RETRIEVAL_MODE=vector`
+- `RETRIEVAL_MODE=hybrid`
 - `HYBRID_FUSION_STRATEGY=rrf`
 - `HYBRID_VECTOR_WEIGHT=0.6`
 - `HYBRID_BM25_WEIGHT=0.4`
@@ -982,6 +985,8 @@ Operational hardening added:
 - Docker health checks and restart policies
 - request size limit, upload size validation, security headers, rate limiting
 - text-first PDF extraction with optional Japanese OCR fallback for scanned PDFs
+- Office document extraction for DOCX, XLSX, and PPTX without Microsoft Office
+- NFKC text normalization and Japanese-capable BM25 tokenization for document retrieval
 - production JWT secret validation and code repository host allowlist
 - audit logs for auth, ingestion, document management, and ACL changes
 - benchmark and vector consistency audit scripts

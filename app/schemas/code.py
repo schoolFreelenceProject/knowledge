@@ -21,6 +21,8 @@ DEFAULT_CODE_INCLUDE_GLOBS = [
     "**/*.cpp",
     "**/*.hpp",
     "**/*.php",
+    "**/*.md",
+    "**/*.markdown",
 ]
 DEFAULT_CODE_EXCLUDE_GLOBS = [
     "**/.git/**",

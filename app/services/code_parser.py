@@ -20,6 +20,8 @@ LANGUAGE_BY_SUFFIX = {
     ".cpp": "cpp",
     ".hpp": "cpp",
     ".php": "php",
+    ".md": "markdown",
+    ".markdown": "markdown",
 }
 
 SYMBOL_KIND_BY_NODE_TYPE = {
@@ -44,7 +46,7 @@ SYMBOL_KIND_BY_NODE_TYPE = {
 }
 
 # The native C/C++ parser can segfault on real ROS2 repositories in the runtime image.
-TREE_SITTER_FALLBACK_LANGUAGES = {"c", "cpp", "php"}
+TREE_SITTER_FALLBACK_LANGUAGES = {"c", "cpp", "php", "markdown"}
 
 
 class CodeParserError(RuntimeError):

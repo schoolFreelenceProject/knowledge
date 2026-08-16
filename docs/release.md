@@ -85,9 +85,11 @@ Do not commit `.env` or copied secrets.
 
 Documents:
 
-- Single upload supports Markdown and PDF.
-- Folder upload supports recursive Markdown/PDF files and preserves relative
+- Single upload supports Markdown, PDF, DOCX, XLSX, and PPTX.
+- Folder upload supports recursive Markdown/PDF/Office files and preserves relative
   paths such as `HR/leave.md`.
+- Mixed folders can include Markdown, PDF, DOCX, XLSX, and PPTX together; one
+  malformed document must not stop the rest of the folder.
 - Unsupported, hidden/system, generated/cache, binary, and oversized files are
   skipped with per-file reasons where applicable.
 

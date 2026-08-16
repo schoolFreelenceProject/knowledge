@@ -51,6 +51,7 @@ def test_git_repository_loader_clones_and_discovers_code_files(tmp_path) -> None
     assert len(cloned.commit_sha) == 40
     assert {path.relative_to(cloned.path).as_posix() for path in files} == {
         "Controller.php",
+        "README.md",
         "app.py",
     }
     assert discovery.skip_reasons["excluded_path"] >= 1

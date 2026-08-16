@@ -20,6 +20,16 @@ class DocumentChunkDetail(BaseModel):
     qdrant_point_id: str
     chunk_index: int
     page_number: int | None
+    section_heading: str | None = None
+    heading_path: str | None = None
+    block_kind: str | None = None
+    workbook: str | None = None
+    sheet_name: str | None = None
+    cell_range: str | None = None
+    row_start: int | None = None
+    row_end: int | None = None
+    slide_number: int | None = None
+    slide_title: str | None = None
     start_char: int
     end_char: int
     created_at: datetime

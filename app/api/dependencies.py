@@ -167,6 +167,7 @@ def get_ingestion_service() -> IngestionService:
         permission_service=permission_service,
         max_upload_bytes=settings.max_upload_file_size,
         pdf_extraction_config=_build_pdf_extraction_config(settings),
+        retrieval_index_refresh=_refresh_retrieval_indexes,
     )
 
 
@@ -257,6 +258,7 @@ def get_document_management_service() -> DocumentManagementService:
         vector_store=vector_store,
         metadata_service=metadata_service,
         pdf_extraction_config=_build_pdf_extraction_config(settings),
+        retrieval_index_refresh=_refresh_retrieval_indexes,
     )
 
 
@@ -313,3 +315,10 @@ def _build_pdf_extraction_config(settings) -> PdfExtractionConfig:
             settings.pdf_text_extraction_timeout_seconds
         ),
     )
+
+
+def _refresh_retrieval_indexes() -> None:
+    retrieval_service = get_retrieval_service()
+    bm25_service = retrieval_service.bm25_retrieval_service
+    if bm25_service is not None:
+        bm25_service.rebuild_index()

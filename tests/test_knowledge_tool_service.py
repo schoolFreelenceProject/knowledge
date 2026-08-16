@@ -151,6 +151,8 @@ def _build_document_result() -> RetrievalResult:
             source_path="company_policy.md",
             file_type="markdown",
             page_number=None,
+            section_heading="Remote Work Policy",
+            heading_path="Remote Work Policy",
             chunk_index=1,
             start_char=0,
             end_char=24,
@@ -222,6 +224,9 @@ def test_search_knowledge_uses_acl_points_and_content_type_filter() -> None:
 
     assert response.request_id == "req-search"
     assert response.results[0].source_type == "document"
+    assert response.results[0].document_metadata.section_heading == (
+        "Remote Work Policy"
+    )
     assert service.retrieval_service.calls == [
         {
             "query": "remote work",

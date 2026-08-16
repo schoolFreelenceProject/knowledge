@@ -62,7 +62,7 @@ class FakeRepositoryLoader:
         for path in sorted(repository_path.iterdir()):
             if not path.is_file():
                 continue
-            if path.suffix in {".php", ".py"}:
+            if path.suffix in {".md", ".php", ".py"}:
                 paths.append(path)
                 continue
 
@@ -470,6 +470,43 @@ def test_code_ingestion_indexes_php_files_and_records_skips(tmp_path) -> None:
     }
 
 
+def test_code_ingestion_indexes_markdown_only_repository(tmp_path) -> None:
+    (
+        service,
+        _metadata_service,
+        _permission_service,
+        _vector_store,
+        session_factory,
+    ) = _build_services(tmp_path)
+    repo_path = tmp_path / "repo"
+    (repo_path / "app.py").unlink()
+    (repo_path / "backend-developer.md").write_text(
+        "# Backend Developer\n\nUse this agent for API and persistence work.\n",
+        encoding="utf-8",
+    )
+
+    response = service.ingest_repository(
+        repo_url="file:///repo",
+        branch="main",
+        include_globs=None,
+        exclude_globs=[],
+        uploader_user_id=7,
+    )
+
+    with session_factory() as session:
+        repository = session.get(CodeRepositoryRecord, response.repository_id)
+        files = session.scalars(select(CodeFileRecord)).all()
+
+    assert repository is not None
+    assert repository.status == DocumentStatus.INDEXED.value
+    assert response.files == 1
+    assert response.chunks == 1
+    assert response.stored_vectors == 1
+    assert [(file.file_path, file.language) for file in files] == [
+        ("backend-developer.md", "markdown")
+    ]
+
+
 def test_code_folder_ingestion_indexes_nested_mixed_language_paths_and_acl(
     tmp_path,
 ) -> None:
@@ -565,12 +602,11 @@ def test_code_folder_ingestion_skips_unsupported_binary_and_vendor_files(
     )
 
     assert response.repo_name == "LocalCode"
-    assert response.files == 1
-    assert response.skipped_files == 4
+    assert response.files == 2
+    assert response.skipped_files == 3
     assert response.skip_reasons == {
         "binary_file": 1,
         "excluded_path": 2,
-        "unsupported_extension": 1,
     }
 
 

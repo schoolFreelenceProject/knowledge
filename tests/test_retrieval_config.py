@@ -3,13 +3,13 @@ import pytest
 from app.core.config import get_settings
 
 
-def test_retrieval_config_defaults_to_vector(monkeypatch) -> None:
+def test_retrieval_config_defaults_to_hybrid(monkeypatch) -> None:
     monkeypatch.delenv("RETRIEVAL_MODE", raising=False)
     monkeypatch.delenv("RERANKER_ENABLED", raising=False)
 
     settings = get_settings()
 
-    assert settings.retrieval_mode == "vector"
+    assert settings.retrieval_mode == "hybrid"
     assert settings.hybrid_fusion_strategy == "rrf"
     assert settings.reranker_enabled is False
 

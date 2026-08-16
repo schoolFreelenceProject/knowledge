@@ -146,6 +146,15 @@ def _build_retrieved_documents(
             source_path=result.metadata.source_path,
             file_type=result.metadata.file_type,
             page_number=result.page_number,
+            section_heading=result.metadata.section_heading,
+            heading_path=result.metadata.heading_path,
+            workbook=result.metadata.workbook,
+            sheet_name=result.metadata.sheet_name,
+            cell_range=result.metadata.cell_range,
+            row_start=result.metadata.row_start,
+            row_end=result.metadata.row_end,
+            slide_number=result.metadata.slide_number,
+            slide_title=result.metadata.slide_title,
             chunk_index=result.metadata.chunk_index,
             language=result.metadata.language,
             symbol_name=result.metadata.symbol_name,
@@ -224,10 +233,34 @@ def _matches_expected_source(
     ):
         return False
 
-    if expected_source.page_number is None:
-        return True
+    if (
+        expected_source.section_heading is not None
+        and metadata.section_heading != expected_source.section_heading
+    ):
+        return False
 
-    return retrieval_result.page_number == expected_source.page_number
+    if (
+        expected_source.sheet_name is not None
+        and metadata.sheet_name != expected_source.sheet_name
+    ):
+        return False
+
+    if (
+        expected_source.cell_range is not None
+        and metadata.cell_range != expected_source.cell_range
+    ):
+        return False
+
+    if (
+        expected_source.slide_number is not None
+        and metadata.slide_number != expected_source.slide_number
+    ):
+        return False
+
+    if expected_source.page_number is not None:
+        return retrieval_result.page_number == expected_source.page_number
+
+    return True
 
 
 def _score_answer_keywords(

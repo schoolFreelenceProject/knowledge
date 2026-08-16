@@ -253,6 +253,33 @@ def _document_result(point_id: str = "doc-point-1") -> RetrievalResult:
     )
 
 
+def _office_document_result() -> RetrievalResult:
+    return RetrievalResult(
+        point_id="doc-point-1",
+        text="Workbook: 勤務表.xlsx\nSheet: 勤怠\nRow 2: A=山田太郎 | B=在宅勤務",
+        filename="HR/leave.md",
+        page_number=None,
+        score=0.87,
+        content_type="document",
+        metadata=ChunkMetadata(
+            filename="HR/leave.md",
+            source_path="HR/leave.md",
+            file_type="xlsx",
+            content_type="document",
+            page_number=None,
+            workbook="勤務表.xlsx",
+            sheet_name="勤怠",
+            cell_range="A1:B2",
+            row_start=1,
+            row_end=2,
+            block_kind="sheet_rows",
+            chunk_index=1,
+            start_char=0,
+            end_char=68,
+        ),
+    )
+
+
 def _code_result() -> RetrievalResult:
     return RetrievalResult(
         point_id="code-point-1",
@@ -299,6 +326,22 @@ def test_document_search_returns_document_metadata_and_preview(tmp_path) -> None
     assert response.results[0].chunk_index == 1
     assert "remote work leave" in response.results[0].preview
     assert response.results[0].inspection.text.startswith("Employees may request")
+
+
+def test_document_search_returns_office_location_metadata(tmp_path) -> None:
+    service, _retrieval_service = _build_services(tmp_path, [_office_document_result()])
+
+    response = service.search(
+        KnowledgeSearchRequest(query="山田太郎", mode="documents", top_k=5),
+        user_id=7,
+    )
+
+    result = response.results[0]
+    assert result.sheet_name == "勤怠"
+    assert result.cell_range == "A1:B2"
+    assert result.row_start == 1
+    assert result.row_end == 2
+    assert result.inspection.text.startswith("Workbook: 勤務表.xlsx")
 
 
 def test_code_search_returns_code_metadata_and_surrounding_lines(tmp_path) -> None:

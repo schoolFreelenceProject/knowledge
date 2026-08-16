@@ -21,7 +21,11 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Panel, PanelHeader } from "../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/StatusState";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import type { DocumentSummary, FolderIngestResponse } from "../types/api";
+import type {
+  DocumentChunkDetail,
+  DocumentSummary,
+  FolderIngestResponse,
+} from "../types/api";
 import { compactHash, formatDateTime, formatNumber } from "../utils/format";
 
 type FolderSelection = {
@@ -209,7 +213,7 @@ export function DocumentsPage() {
                 <input
                   className="block text-sm"
                   type="file"
-                  accept=".pdf,.md,.markdown"
+                  accept=".pdf,.md,.markdown,.docx,.xlsx,.pptx"
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     if (file) {
@@ -381,7 +385,7 @@ export function DocumentsPage() {
                       <thead>
                         <tr>
                           <th>Index</th>
-                          <th>Page</th>
+                          <th>Location</th>
                           <th>Chars</th>
                         </tr>
                       </thead>
@@ -389,7 +393,7 @@ export function DocumentsPage() {
                         {detailQuery.data.chunks.map((chunk) => (
                           <tr key={chunk.id}>
                             <td>{chunk.chunk_index}</td>
-                            <td>{chunk.page_number ?? "-"}</td>
+                            <td>{documentChunkLocation(chunk)}</td>
                             <td>{chunk.start_char}-{chunk.end_char}</td>
                           </tr>
                         ))}
@@ -551,6 +555,25 @@ function formatFolderReason(reason: string | null, message: string | null): stri
   }
 
   return reason.replaceAll("_", " ");
+}
+
+function documentChunkLocation(chunk: DocumentChunkDetail): string {
+  if (chunk.page_number) {
+    return `Page ${chunk.page_number}`;
+  }
+  if (chunk.sheet_name) {
+    const range = chunk.cell_range ? ` ${chunk.cell_range}` : "";
+    return `${chunk.sheet_name}${range}`;
+  }
+  if (chunk.slide_number) {
+    const title = chunk.slide_title ? `: ${chunk.slide_title}` : "";
+    return `Slide ${chunk.slide_number}${title}`;
+  }
+  if (chunk.heading_path || chunk.section_heading) {
+    return chunk.heading_path ?? chunk.section_heading ?? "-";
+  }
+
+  return chunk.block_kind ?? "-";
 }
 
 function buildFolderSelection(fileList: FileList | null): FolderSelection | null {

@@ -70,7 +70,7 @@ class FakeVectorStore:
         self.active_point_ids.difference_update(point_ids)
 
 
-def _build_services(tmp_path, vector_store=None):
+def _build_services(tmp_path, vector_store=None, retrieval_index_refresh=None):
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -84,6 +84,7 @@ def _build_services(tmp_path, vector_store=None):
         embedding_service=FakeEmbeddingService(),
         vector_store=vector_store or FakeVectorStore(),
         metadata_service=metadata_service,
+        retrieval_index_refresh=retrieval_index_refresh,
     )
     return management_service, session_factory
 
@@ -219,6 +220,24 @@ def test_reindex_replaces_metadata_then_deletes_old_vectors(tmp_path) -> None:
     assert response.replaced_vectors == 1
     assert vector_store.deleted_point_ids == ["old-point-1"]
     assert vector_store.active_point_ids == {"new-point-1"}
+
+
+def test_reindex_refreshes_retrieval_index_after_success(tmp_path) -> None:
+    refresh_calls: list[str] = []
+    vector_store = FakeVectorStore(
+        point_prefix="new-point",
+        existing_point_ids=["old-point-1"],
+    )
+    service, session_factory = _build_services(
+        tmp_path,
+        vector_store=vector_store,
+        retrieval_index_refresh=lambda: refresh_calls.append("refresh"),
+    )
+    document_id = _create_document(session_factory, tmp_path)
+
+    service.reindex_document(document_id)
+
+    assert refresh_calls == ["refresh"]
 
 
 def test_reindex_does_not_delete_shared_deterministic_point_ids(tmp_path) -> None:
